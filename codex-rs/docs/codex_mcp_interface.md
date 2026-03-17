@@ -102,6 +102,12 @@ Clients should render events and, when present, surface approval requests (see n
 
 ## Tool responses
 
+The server currently exposes three tools:
+
+- `codex` - start a new Codex thread with an initial prompt.
+- `codex-reply` - continue an existing thread by `threadId` (or deprecated `conversationId`).
+- `codex-status` - fetch compact runtime status for a loaded thread with token and context-window usage.
+
 The `codex` and `codex-reply` tools return standard MCP `CallToolResult` payloads. For compatibility with MCP clients that prefer `structuredContent`, Codex mirrors the content blocks inside `structuredContent` alongside the `threadId`.
 
 Example:
@@ -115,6 +121,33 @@ Example:
   }
 }
 ```
+
+The `codex-status` tool also returns a normal `CallToolResult`, with status-focused structured content:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "status=completed; tokens total=321 input=321 cached_input=0 output=0 reasoning_output=0; context unavailable"
+    }
+  ],
+  "structuredContent": {
+    "threadId": "019bbed6-1e9e-7f31-984c-a05b65045719",
+    "status": "completed",
+    "tokenUsage": {
+      "inputTokens": 321,
+      "cachedInputTokens": 0,
+      "outputTokens": 0,
+      "reasoningOutputTokens": 0,
+      "totalTokens": 321
+    },
+    "contextWindow": null
+  }
+}
+```
+
+`codex-status` only inspects currently loaded in-memory threads; it does not implicitly resume threads from rollout files.
 
 ## Approvals (server -> client)
 

@@ -216,17 +216,7 @@ pub struct CodexToolCallReplyParam {
 
 impl CodexToolCallReplyParam {
     pub(crate) fn get_thread_id(&self) -> anyhow::Result<ThreadId> {
-        if let Some(thread_id) = &self.thread_id {
-            let thread_id = ThreadId::from_string(thread_id)?;
-            Ok(thread_id)
-        } else if let Some(conversation_id) = &self.conversation_id {
-            let thread_id = ThreadId::from_string(conversation_id)?;
-            Ok(thread_id)
-        } else {
-            Err(anyhow::anyhow!(
-                "either threadId or conversationId must be provided"
-            ))
-        }
+        get_thread_id_from_fields(self.thread_id.as_deref(), self.conversation_id.as_deref())
     }
 }
 
@@ -254,6 +244,124 @@ pub(crate) fn create_tool_for_codex_tool_call_reply_param() -> Tool {
         execution: None,
         icons: None,
         meta: None,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexToolStatusParam {
+    /// DEPRECATED: use threadId instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conversation_id: Option<String>,
+
+    /// The thread id for this Codex session.
+    /// This field is required, but we keep it optional here for backward
+    /// compatibility for clients that still use conversationId.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread_id: Option<String>,
+}
+
+impl CodexToolStatusParam {
+    pub(crate) fn get_thread_id(&self) -> anyhow::Result<ThreadId> {
+        get_thread_id_from_fields(self.thread_id.as_deref(), self.conversation_id.as_deref())
+    }
+}
+
+/// Builds a `Tool` definition for the `codex-status` tool-call.
+pub(crate) fn create_tool_for_codex_tool_status_param() -> Tool {
+    let schema = SchemaSettings::draft2019_09()
+        .with(|s| {
+            s.inline_subschemas = true;
+            s.option_add_null_type = false;
+        })
+        .into_generator()
+        .into_root_schema_for::<CodexToolStatusParam>();
+
+    let input_schema =
+        create_tool_input_schema(schema, "Codex status tool schema should serialize");
+
+    Tool {
+        name: "codex-status".into(),
+        title: Some("Codex Status".to_string()),
+        input_schema,
+        output_schema: Some(codex_status_tool_output_schema()),
+        description: Some("Get compact status for a loaded Codex thread by thread id.".into()),
+        annotations: None,
+        execution: None,
+        icons: None,
+        meta: None,
+    }
+}
+
+fn codex_status_tool_output_schema() -> Arc<JsonObject> {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "threadId": { "type": "string" },
+            "status": {
+                "type": "string",
+                "enum": ["pending_init", "running", "completed", "errored", "shutdown"]
+            },
+            "tokenUsage": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "inputTokens": { "type": "integer" },
+                            "cachedInputTokens": { "type": "integer" },
+                            "outputTokens": { "type": "integer" },
+                            "reasoningOutputTokens": { "type": "integer" },
+                            "totalTokens": { "type": "integer" }
+                        },
+                        "required": [
+                            "inputTokens",
+                            "cachedInputTokens",
+                            "outputTokens",
+                            "reasoningOutputTokens",
+                            "totalTokens"
+                        ]
+                    },
+                    { "type": "null" }
+                ]
+            },
+            "contextWindow": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "maxTokens": { "type": "integer" },
+                            "usedTokens": { "type": "integer" },
+                            "remainingTokens": { "type": "integer" },
+                            "remainingPercent": { "type": "number" }
+                        },
+                        "required": ["maxTokens", "usedTokens", "remainingTokens", "remainingPercent"]
+                    },
+                    { "type": "null" }
+                ]
+            }
+        },
+        "required": ["threadId", "status", "tokenUsage", "contextWindow"],
+    });
+    match schema {
+        serde_json::Value::Object(map) => Arc::new(map),
+        _ => unreachable!("json literal must be an object"),
+    }
+}
+
+fn get_thread_id_from_fields(
+    thread_id: Option<&str>,
+    conversation_id: Option<&str>,
+) -> anyhow::Result<ThreadId> {
+    if let Some(thread_id) = thread_id {
+        let thread_id = ThreadId::from_string(thread_id)?;
+        Ok(thread_id)
+    } else if let Some(conversation_id) = conversation_id {
+        let thread_id = ThreadId::from_string(conversation_id)?;
+        Ok(thread_id)
+    } else {
+        Err(anyhow::anyhow!(
+            "either threadId or conversationId must be provided"
+        ))
     }
 }
 
@@ -427,6 +535,79 @@ mod tests {
             "type": "object"
           },
           "title": "Codex Reply",
+        });
+        assert_eq!(expected_tool_json, tool_json);
+    }
+
+    #[test]
+    fn verify_codex_tool_status_json_schema() {
+        let tool = create_tool_for_codex_tool_status_param();
+        let tool_json = serde_json::to_value(&tool).expect("tool serializes");
+        let expected_tool_json = serde_json::json!({
+          "description": "Get compact status for a loaded Codex thread by thread id.",
+          "inputSchema": {
+            "properties": {
+              "conversationId": {
+                "description": "DEPRECATED: use threadId instead.",
+                "type": "string"
+              },
+              "threadId": {
+                "description": "The thread id for this Codex session. This field is required, but we keep it optional here for backward compatibility for clients that still use conversationId.",
+                "type": "string"
+              }
+            },
+            "type": "object",
+          },
+          "name": "codex-status",
+          "outputSchema": {
+            "properties": {
+              "contextWindow": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "maxTokens": { "type": "integer" },
+                      "remainingPercent": { "type": "number" },
+                      "remainingTokens": { "type": "integer" },
+                      "usedTokens": { "type": "integer" }
+                    },
+                    "required": ["maxTokens", "usedTokens", "remainingTokens", "remainingPercent"],
+                    "type": "object"
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "status": {
+                "enum": ["pending_init", "running", "completed", "errored", "shutdown"],
+                "type": "string"
+              },
+              "threadId": { "type": "string" },
+              "tokenUsage": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "cachedInputTokens": { "type": "integer" },
+                      "inputTokens": { "type": "integer" },
+                      "outputTokens": { "type": "integer" },
+                      "reasoningOutputTokens": { "type": "integer" },
+                      "totalTokens": { "type": "integer" }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "cachedInputTokens",
+                      "outputTokens",
+                      "reasoningOutputTokens",
+                      "totalTokens"
+                    ],
+                    "type": "object"
+                  },
+                  { "type": "null" }
+                ]
+              }
+            },
+            "required": ["threadId", "status", "tokenUsage", "contextWindow"],
+            "type": "object"
+          },
+          "title": "Codex Status",
         });
         assert_eq!(expected_tool_json, tool_json);
     }

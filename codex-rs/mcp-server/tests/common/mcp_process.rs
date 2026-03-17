@@ -202,20 +202,31 @@ impl McpProcess {
         &mut self,
         params: CodexToolCallParam,
     ) -> anyhow::Result<i64> {
-        let codex_tool_call_params = CallToolRequestParams {
+        self.send_tool_call("codex", Some(serde_json::to_value(params)?))
+            .await
+    }
+
+    pub async fn send_tool_call(
+        &mut self,
+        tool_name: &'static str,
+        arguments: Option<serde_json::Value>,
+    ) -> anyhow::Result<i64> {
+        let arguments = arguments.map(|args| match args {
+            serde_json::Value::Object(map) => map,
+            _ => unreachable!("tool arguments serialize to an object"),
+        });
+        let tool_call_params = CallToolRequestParams {
             meta: None,
-            name: "codex".into(),
-            arguments: Some(match serde_json::to_value(params)? {
-                serde_json::Value::Object(map) => map,
-                _ => unreachable!("params serialize to object"),
-            }),
+            name: tool_name.into(),
+            arguments,
             task: None,
         };
-        self.send_request(
-            "tools/call",
-            Some(serde_json::to_value(codex_tool_call_params)?),
-        )
-        .await
+        self.send_request("tools/call", Some(serde_json::to_value(tool_call_params)?))
+            .await
+    }
+
+    pub async fn send_list_tools_request(&mut self) -> anyhow::Result<i64> {
+        self.send_request("tools/list", None).await
     }
 
     async fn send_request(
