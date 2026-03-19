@@ -726,7 +726,7 @@ fn create_call_tool_result_for_codex_status(
             info.model_context_window.map_or_else(
                 || serde_json::Value::Null,
                 |max_tokens| {
-                    let used_tokens = info.total_token_usage.total_tokens;
+                    let used_tokens = info.last_token_usage.total_tokens.max(0);
                     let remaining_tokens = max_tokens.saturating_sub(used_tokens);
                     let remaining_percent = if max_tokens > 0 {
                         (remaining_tokens as f64 / max_tokens as f64) * 100.0
@@ -766,15 +766,16 @@ fn codex_status_summary(status: &str, token_usage_info: Option<&TokenUsageInfo>)
             let output_tokens = info.total_token_usage.output_tokens;
             let reasoning_output_tokens = info.total_token_usage.reasoning_output_tokens;
             let total_tokens = info.total_token_usage.total_tokens;
+            let context_used_tokens = info.last_token_usage.total_tokens.max(0);
             if let Some(context_window) = info.model_context_window {
-                let remaining_tokens = context_window.saturating_sub(total_tokens);
+                let remaining_tokens = context_window.saturating_sub(context_used_tokens);
                 let remaining_percent = if context_window > 0 {
                     (remaining_tokens as f64 / context_window as f64) * 100.0
                 } else {
                     0.0
                 };
                 format!(
-                    "status={status}; tokens total={total_tokens} input={input_tokens} cached_input={cached_input_tokens} output={output_tokens} reasoning_output={reasoning_output_tokens}; context max={context_window} used={total_tokens} remaining={remaining_tokens} ({remaining_percent:.2}%)"
+                    "status={status}; tokens total={total_tokens} input={input_tokens} cached_input={cached_input_tokens} output={output_tokens} reasoning_output={reasoning_output_tokens}; context max={context_window} used={context_used_tokens} remaining={remaining_tokens} ({remaining_percent:.2}%)"
                 )
             } else {
                 format!(

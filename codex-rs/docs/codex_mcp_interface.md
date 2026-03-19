@@ -147,6 +147,11 @@ The `codex-status` tool also returns a normal `CallToolResult`, with status-focu
 }
 ```
 
+Semantics:
+
+- `tokenUsage` is cumulative for the loaded in-memory thread.
+- `contextWindow.usedTokens` reflects the latest turn's context usage (the same value surfaced by the Codex app context window indicator), not the cumulative session total.
+
 `codex-status` only inspects currently loaded in-memory threads; it does not implicitly resume threads from rollout files.
 
 ## Approvals (server -> client)
