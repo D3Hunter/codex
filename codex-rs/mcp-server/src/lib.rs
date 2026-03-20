@@ -15,6 +15,7 @@ use tracing_subscriber::prelude::*;
 mod codex_tool_config;
 mod codex_tool_runner;
 mod exec_approval;
+mod http_runtime;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
@@ -34,6 +35,12 @@ pub use crate::transport::McpListenTransportParseError;
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const OTEL_SERVICE_NAME: &str = "codex_mcp_server";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransportRuntime {
+    Stdio,
+    Http,
+}
+
 pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
@@ -44,7 +51,7 @@ pub async fn run_main(
 pub async fn run_main_with_transport(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
-    _listen_transport: McpListenTransport,
+    listen_transport: McpListenTransport,
 ) -> IoResult<()> {
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
@@ -85,7 +92,23 @@ pub async fn run_main_with_transport(
         .with(otel_tracing_layer)
         .try_init();
 
-    stdio_runtime::run(arg0_paths, Arc::new(config)).await
+    let config = Arc::new(config);
+    match transport_runtime(&listen_transport) {
+        TransportRuntime::Stdio => stdio_runtime::run(arg0_paths, config).await,
+        TransportRuntime::Http => match listen_transport {
+            McpListenTransport::Http { bind_address, path } => {
+                http_runtime::run(arg0_paths, config, bind_address, path).await
+            }
+            McpListenTransport::Stdio => unreachable!("transport runtime should match transport"),
+        },
+    }
+}
+
+fn transport_runtime(transport: &McpListenTransport) -> TransportRuntime {
+    match transport {
+        McpListenTransport::Stdio => TransportRuntime::Stdio,
+        McpListenTransport::Http { .. } => TransportRuntime::Http,
+    }
 }
 
 #[cfg(test)]
@@ -137,5 +160,24 @@ mod tests {
         provider.shutdown();
 
         Ok(())
+    }
+
+    #[test]
+    fn transport_runtime_defaults_to_stdio() {
+        assert_eq!(
+            transport_runtime(&McpListenTransport::Stdio),
+            TransportRuntime::Stdio
+        );
+    }
+
+    #[test]
+    fn transport_runtime_selects_http_for_http_transport() {
+        assert_eq!(
+            transport_runtime(&McpListenTransport::Http {
+                bind_address: "127.0.0.1:8080".parse().expect("socket address"),
+                path: "/mcp".to_string(),
+            }),
+            TransportRuntime::Http
+        );
     }
 }
