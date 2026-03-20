@@ -32,6 +32,18 @@ pub fn create_final_assistant_message_sse_response(message: &str) -> anyhow::Res
     ]))
 }
 
+pub fn create_final_assistant_message_sse_response_with_tokens(
+    message: &str,
+    total_tokens: i64,
+) -> anyhow::Result<String> {
+    let response_id = "resp-final";
+    Ok(responses::sse(vec![
+        responses::ev_response_created(response_id),
+        responses::ev_assistant_message("msg-final", message),
+        responses::ev_completed_with_tokens(response_id, total_tokens),
+    ]))
+}
+
 pub fn create_apply_patch_sse_response(
     patch_content: &str,
     call_id: &str,

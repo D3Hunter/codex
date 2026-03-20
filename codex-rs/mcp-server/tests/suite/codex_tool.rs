@@ -25,6 +25,7 @@ use core_test_support::skip_if_no_network;
 use mcp_test_support::McpProcess;
 use mcp_test_support::create_apply_patch_sse_response;
 use mcp_test_support::create_final_assistant_message_sse_response;
+use mcp_test_support::create_final_assistant_message_sse_response_with_tokens;
 use mcp_test_support::create_mock_responses_server;
 use mcp_test_support::create_shell_command_sse_response;
 use mcp_test_support::format_with_current_shell;
@@ -428,6 +429,308 @@ async fn codex_tool_passes_base_instructions() -> anyhow::Result<()> {
     assert!(
         developer_contents.contains(&"Foreshadow upcoming tool calls."),
         "expected developer instructions in developer messages, got {developer_contents:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_codex_status_tool_returns_status_and_token_usage() {
+    skip_if_no_network!();
+
+    if let Err(err) = codex_status_tool_returns_status_and_token_usage().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn codex_status_tool_returns_status_and_token_usage() -> anyhow::Result<()> {
+    let McpHandle {
+        process: mut mcp_process,
+        server: _server,
+        dir: _dir,
+    } = create_mcp_process(vec![
+        create_final_assistant_message_sse_response_with_tokens("Status test response", 321)?,
+    ])
+    .await?;
+
+    let codex_request_id = mcp_process
+        .send_codex_tool_call(CodexToolCallParam {
+            prompt: "Say hello".to_string(),
+            ..Default::default()
+        })
+        .await?;
+    let codex_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(codex_request_id)),
+    )
+    .await??;
+    let thread_id = codex_response
+        .result
+        .get("structuredContent")
+        .and_then(|v| v.get("threadId"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("codex tool response should include threadId"))?
+        .to_string();
+
+    let codex_status_request_id = mcp_process
+        .send_tool_call("codex-status", Some(json!({ "threadId": thread_id })))
+        .await?;
+    let status_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(codex_status_request_id)),
+    )
+    .await??;
+
+    assert_eq!(status_response.jsonrpc, JsonRpcVersion2_0);
+    assert_eq!(
+        status_response.id,
+        RequestId::Number(codex_status_request_id)
+    );
+    assert_eq!(status_response.result.get("isError"), None);
+    let structured_content = status_response
+        .result
+        .get("structuredContent")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("codex-status should include structuredContent"))?;
+    assert_eq!(structured_content.get("threadId"), Some(&json!(thread_id)));
+    assert_eq!(structured_content.get("status"), Some(&json!("completed")));
+    assert_eq!(
+        structured_content.get("tokenUsage"),
+        Some(&json!({
+            "inputTokens": 321,
+            "cachedInputTokens": 0,
+            "outputTokens": 0,
+            "reasoningOutputTokens": 0,
+            "totalTokens": 321,
+        }))
+    );
+    let context_window = structured_content
+        .get("contextWindow")
+        .ok_or_else(|| anyhow::anyhow!("codex-status should include contextWindow"))?;
+    if let Some(context_window) = context_window.as_object() {
+        let max_tokens = context_window
+            .get("maxTokens")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| anyhow::anyhow!("contextWindow.maxTokens should be an integer"))?;
+        assert_eq!(context_window.get("usedTokens"), Some(&json!(321)));
+        assert_eq!(
+            context_window.get("remainingTokens"),
+            Some(&json!(max_tokens.saturating_sub(321)))
+        );
+    } else {
+        assert_eq!(context_window, &json!(null));
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_codex_status_tool_context_window_uses_last_usage() {
+    skip_if_no_network!();
+
+    if let Err(err) = codex_status_tool_context_window_uses_last_usage().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn codex_status_tool_context_window_uses_last_usage() -> anyhow::Result<()> {
+    let McpHandle {
+        process: mut mcp_process,
+        server: _server,
+        dir: _dir,
+    } = create_mcp_process(vec![
+        create_final_assistant_message_sse_response_with_tokens("First response", 321)?,
+        create_final_assistant_message_sse_response_with_tokens("Second response", 87)?,
+    ])
+    .await?;
+
+    let mut config = HashMap::new();
+    config.insert("model_context_window".to_string(), json!(1_000));
+    let codex_request_id = mcp_process
+        .send_codex_tool_call(CodexToolCallParam {
+            prompt: "Say hello".to_string(),
+            config: Some(config),
+            ..Default::default()
+        })
+        .await?;
+    let codex_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(codex_request_id)),
+    )
+    .await??;
+    let thread_id = codex_response
+        .result
+        .get("structuredContent")
+        .and_then(|v| v.get("threadId"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("codex tool response should include threadId"))?
+        .to_string();
+
+    let codex_reply_request_id = mcp_process
+        .send_tool_call(
+            "codex-reply",
+            Some(json!({
+                "threadId": thread_id,
+                "prompt": "Continue",
+            })),
+        )
+        .await?;
+    let _codex_reply_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(codex_reply_request_id)),
+    )
+    .await??;
+
+    let codex_status_request_id = mcp_process
+        .send_tool_call("codex-status", Some(json!({ "threadId": thread_id })))
+        .await?;
+    let status_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(codex_status_request_id)),
+    )
+    .await??;
+
+    let structured_content = status_response
+        .result
+        .get("structuredContent")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("codex-status should include structuredContent"))?;
+    assert_eq!(
+        structured_content.get("tokenUsage"),
+        Some(&json!({
+            "inputTokens": 408,
+            "cachedInputTokens": 0,
+            "outputTokens": 0,
+            "reasoningOutputTokens": 0,
+            "totalTokens": 408,
+        }))
+    );
+    let context_window = structured_content
+        .get("contextWindow")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("codex-status should include contextWindow object"))?;
+    let max_tokens = context_window
+        .get("maxTokens")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| anyhow::anyhow!("contextWindow.maxTokens should be an integer"))?;
+    assert_eq!(context_window.get("usedTokens"), Some(&json!(87)));
+    assert_eq!(
+        context_window.get("remainingTokens"),
+        Some(&json!(max_tokens.saturating_sub(87)))
+    );
+    let remaining_percent = context_window
+        .get("remainingPercent")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| anyhow::anyhow!("contextWindow.remainingPercent should be a float"))?;
+    let expected_remaining_percent =
+        (max_tokens.saturating_sub(87) as f64 / max_tokens as f64) * 100.0;
+    assert!(
+        (remaining_percent - expected_remaining_percent).abs() < 1e-9,
+        "remainingPercent should match remaining/max math, got: {remaining_percent}"
+    );
+
+    let text_summary = status_response
+        .result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|content| content.first())
+        .and_then(|entry| entry.get("text"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("codex-status should include summary text"))?;
+    assert!(
+        text_summary.contains(&format!(
+            "context max={max_tokens} used=87 remaining={}",
+            max_tokens.saturating_sub(87)
+        )),
+        "summary should use last turn usage for context window, got: {text_summary}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_codex_status_tool_unknown_thread_returns_error() {
+    skip_if_no_network!();
+
+    if let Err(err) = codex_status_tool_unknown_thread_returns_error().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn codex_status_tool_unknown_thread_returns_error() -> anyhow::Result<()> {
+    let McpHandle {
+        process: mut mcp_process,
+        server: _server,
+        dir: _dir,
+    } = create_mcp_process(vec![]).await?;
+
+    let unknown_thread_id = "019bbed6-1e9e-7f31-984c-a05b65045719";
+    let request_id = mcp_process
+        .send_tool_call(
+            "codex-status",
+            Some(json!({
+                "threadId": unknown_thread_id,
+            })),
+        )
+        .await?;
+    let response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(request_id)),
+    )
+    .await??;
+
+    assert_eq!(response.result.get("isError"), Some(&json!(true)));
+    assert_eq!(
+        response
+            .result
+            .get("structuredContent")
+            .and_then(|content| content.get("threadId"))
+            .and_then(serde_json::Value::as_str),
+        Some(unknown_thread_id)
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_tools_list_includes_codex_status() {
+    skip_if_no_network!();
+
+    if let Err(err) = tools_list_includes_codex_status().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn tools_list_includes_codex_status() -> anyhow::Result<()> {
+    let McpHandle {
+        process: mut mcp_process,
+        server: _server,
+        dir: _dir,
+    } = create_mcp_process(vec![]).await?;
+
+    let request_id = mcp_process.send_list_tools_request().await?;
+    let response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp_process.read_stream_until_response_message(RequestId::Number(request_id)),
+    )
+    .await??;
+    let tool_names: Vec<String> = response
+        .result
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("tools/list should return tools"))?
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+        .collect();
+
+    assert_eq!(
+        tool_names,
+        vec![
+            "codex".to_string(),
+            "codex-reply".to_string(),
+            "codex-status".to_string(),
+        ]
     );
 
     Ok(())

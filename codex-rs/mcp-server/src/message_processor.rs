@@ -9,8 +9,10 @@ use codex_core::default_client::get_codex_user_agent;
 use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_features::Feature;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
+use codex_protocol::protocol::TokenUsageInfo;
 use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
 use rmcp::model::ClientNotification;
@@ -33,8 +35,10 @@ use tokio::task;
 
 use crate::codex_tool_config::CodexToolCallParam;
 use crate::codex_tool_config::CodexToolCallReplyParam;
+use crate::codex_tool_config::CodexToolStatusParam;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_reply_param;
+use crate::codex_tool_config::create_tool_for_codex_tool_status_param;
 use crate::outgoing_message::OutgoingMessageSender;
 
 pub(crate) struct MessageProcessor {
@@ -319,6 +323,7 @@ impl MessageProcessor {
             tools: vec![
                 create_tool_for_codex_tool_call_param(),
                 create_tool_for_codex_tool_call_reply_param(),
+                create_tool_for_codex_tool_status_param(),
             ],
             next_cursor: None,
         };
@@ -338,6 +343,7 @@ impl MessageProcessor {
                 self.handle_tool_call_codex_session_reply(id, arguments)
                     .await
             }
+            "codex-status" => self.handle_tool_call_codex_status(id, arguments).await,
             _ => {
                 let result = CallToolResult {
                     content: vec![rmcp::model::Content::text(format!("Unknown tool '{name}'"))],
@@ -519,6 +525,88 @@ impl MessageProcessor {
         });
     }
 
+    async fn handle_tool_call_codex_status(
+        &self,
+        request_id: RequestId,
+        arguments: Option<rmcp::model::JsonObject>,
+    ) {
+        let arguments = arguments.map(serde_json::Value::Object);
+        let codex_tool_status_param: CodexToolStatusParam = match arguments {
+            Some(json_val) => match serde_json::from_value::<CodexToolStatusParam>(json_val) {
+                Ok(params) => params,
+                Err(err) => {
+                    let result = CallToolResult {
+                        content: vec![rmcp::model::Content::text(format!(
+                            "Failed to parse configuration for Codex status tool: {err}"
+                        ))],
+                        structured_content: None,
+                        is_error: Some(true),
+                        meta: None,
+                    };
+                    self.outgoing.send_response(request_id, result).await;
+                    return;
+                }
+            },
+            None => {
+                let result = CallToolResult {
+                    content: vec![rmcp::model::Content::text(
+                        "Missing arguments for codex-status tool-call; the `thread_id` field is required.",
+                    )],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                };
+                self.outgoing.send_response(request_id, result).await;
+                return;
+            }
+        };
+
+        let thread_id = match codex_tool_status_param.get_thread_id() {
+            Ok(id) => id,
+            Err(err) => {
+                let result = CallToolResult {
+                    content: vec![rmcp::model::Content::text(format!(
+                        "Failed to parse thread_id: {err}"
+                    ))],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                };
+                self.outgoing.send_response(request_id, result).await;
+                return;
+            }
+        };
+
+        let codex = match self.thread_manager.get_thread(thread_id).await {
+            Ok(codex) => codex,
+            Err(_) => {
+                let error = format!("Session not found for thread_id: {thread_id}");
+                let result = create_call_tool_result_for_codex_status(
+                    thread_id,
+                    "errored",
+                    None,
+                    error,
+                    Some(true),
+                );
+                self.outgoing.send_response(request_id, result).await;
+                return;
+            }
+        };
+
+        let agent_status = codex.agent_status().await;
+        let status = codex_status_name(&agent_status);
+        let token_usage_info = codex.token_usage_info().await;
+        let summary = codex_status_summary(status, token_usage_info.as_ref());
+        let result = create_call_tool_result_for_codex_status(
+            thread_id,
+            status,
+            token_usage_info.as_ref(),
+            summary,
+            None,
+        );
+        self.outgoing.send_response(request_id, result).await;
+    }
+
     fn handle_set_level(&self, params: rmcp::model::SetLevelRequestParams) {
         tracing::info!("logging/setLevel -> params: {:?}", params);
     }
@@ -600,5 +688,102 @@ impl MessageProcessor {
 
     fn handle_initialized_notification(&self) {
         tracing::info!("notifications/initialized");
+    }
+}
+
+fn codex_status_name(status: &AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::PendingInit => "pending_init",
+        AgentStatus::Running => "running",
+        AgentStatus::Completed(_) => "completed",
+        AgentStatus::Errored(_) => "errored",
+        AgentStatus::Shutdown => "shutdown",
+        AgentStatus::NotFound => "errored",
+    }
+}
+
+fn create_call_tool_result_for_codex_status(
+    thread_id: ThreadId,
+    status: &'static str,
+    token_usage_info: Option<&TokenUsageInfo>,
+    text: String,
+    is_error: Option<bool>,
+) -> CallToolResult {
+    let token_usage = token_usage_info.map_or_else(
+        || serde_json::Value::Null,
+        |info| {
+            json!({
+                "inputTokens": info.total_token_usage.input_tokens,
+                "cachedInputTokens": info.total_token_usage.cached_input_tokens,
+                "outputTokens": info.total_token_usage.output_tokens,
+                "reasoningOutputTokens": info.total_token_usage.reasoning_output_tokens,
+                "totalTokens": info.total_token_usage.total_tokens,
+            })
+        },
+    );
+    let context_window = token_usage_info.map_or_else(
+        || serde_json::Value::Null,
+        |info| {
+            info.model_context_window.map_or_else(
+                || serde_json::Value::Null,
+                |max_tokens| {
+                    let used_tokens = info.last_token_usage.total_tokens.max(0);
+                    let remaining_tokens = max_tokens.saturating_sub(used_tokens);
+                    let remaining_percent = if max_tokens > 0 {
+                        (remaining_tokens as f64 / max_tokens as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    json!({
+                        "maxTokens": max_tokens,
+                        "usedTokens": used_tokens,
+                        "remainingTokens": remaining_tokens,
+                        "remainingPercent": remaining_percent,
+                    })
+                },
+            )
+        },
+    );
+
+    let structured_content = json!({
+        "threadId": thread_id,
+        "status": status,
+        "tokenUsage": token_usage,
+        "contextWindow": context_window,
+    });
+    CallToolResult {
+        content: vec![rmcp::model::Content::text(text)],
+        structured_content: Some(structured_content),
+        is_error,
+        meta: None,
+    }
+}
+
+fn codex_status_summary(status: &str, token_usage_info: Option<&TokenUsageInfo>) -> String {
+    match token_usage_info {
+        Some(info) => {
+            let input_tokens = info.total_token_usage.input_tokens;
+            let cached_input_tokens = info.total_token_usage.cached_input_tokens;
+            let output_tokens = info.total_token_usage.output_tokens;
+            let reasoning_output_tokens = info.total_token_usage.reasoning_output_tokens;
+            let total_tokens = info.total_token_usage.total_tokens;
+            let context_used_tokens = info.last_token_usage.total_tokens.max(0);
+            if let Some(context_window) = info.model_context_window {
+                let remaining_tokens = context_window.saturating_sub(context_used_tokens);
+                let remaining_percent = if context_window > 0 {
+                    (remaining_tokens as f64 / context_window as f64) * 100.0
+                } else {
+                    0.0
+                };
+                format!(
+                    "status={status}; tokens total={total_tokens} input={input_tokens} cached_input={cached_input_tokens} output={output_tokens} reasoning_output={reasoning_output_tokens}; context max={context_window} used={context_used_tokens} remaining={remaining_tokens} ({remaining_percent:.2}%)"
+                )
+            } else {
+                format!(
+                    "status={status}; tokens total={total_tokens} input={input_tokens} cached_input={cached_input_tokens} output={output_tokens} reasoning_output={reasoning_output_tokens}; context unavailable"
+                )
+            }
+        }
+        None => format!("status={status}; token usage unavailable"),
     }
 }
