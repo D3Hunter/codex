@@ -12,7 +12,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ID | Subtask | Status | Progress |
 | --- | --- | --- | --- |
 | ST-1 | Add `--listen` to `codex mcp-server` CLI path | `Completed` | `100%` |
-| ST-2 | Implement transport URL parser + parser unit tests | `Not Started` | `0%` |
+| ST-2 | Implement transport URL parser + parser unit tests | `Completed` | `100%` |
 | ST-3 | Wire direct `codex-mcp-server` binary listen input | `Not Started` | `0%` |
 | ST-4 | Extract current stdio runtime into dedicated module | `Not Started` | `0%` |
 | ST-5 | Add runtime transport dispatch in `run_main` | `Not Started` | `0%` |
@@ -42,16 +42,16 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** `codex mcp-server --help` exposes `--listen` and behavior is unchanged without it.
 
 ### ST-2: Implement transport URL parser + parser unit tests
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Implement MCP listen transport enum/parser with strict URL validation and defaults.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/lib.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/transport.rs` (new)
 - **Checklist:**
-  - [ ] Parse `stdio://` and `http://IP:PORT[/PATH]` with `/mcp` default path.
-  - [ ] Reject unsupported schemes and malformed URLs with clear errors.
-  - [ ] Add parser unit tests for valid/invalid cases.
+  - [x] Parse `stdio://` and `http://IP:PORT[/PATH]` with `/mcp` default path.
+  - [x] Reject unsupported schemes and malformed URLs with clear errors.
+  - [x] Add parser unit tests for valid/invalid cases.
 - **Done when:** parser is independently tested and ready for CLI/runtime consumption.
 
 ### ST-3: Wire direct `codex-mcp-server` binary listen input

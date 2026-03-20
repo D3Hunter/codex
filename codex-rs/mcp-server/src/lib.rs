@@ -29,6 +29,7 @@ mod exec_approval;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
+mod transport;
 
 use crate::message_processor::MessageProcessor;
 use crate::outgoing_message::OutgoingJsonRpcMessage;
@@ -42,6 +43,8 @@ pub use crate::exec_approval::ExecApprovalElicitRequestParams;
 pub use crate::exec_approval::ExecApprovalResponse;
 pub use crate::patch_approval::PatchApprovalElicitRequestParams;
 pub use crate::patch_approval::PatchApprovalResponse;
+pub use crate::transport::McpListenTransport;
+pub use crate::transport::McpListenTransportParseError;
 
 /// Size of the bounded channels used to communicate between tasks. The value
 /// is a balance between throughput and memory usage – 128 messages should be
