@@ -47,6 +47,8 @@ pub(crate) struct MessageProcessor {
     arg0_paths: Arg0DispatchPaths,
     thread_manager: Arc<ThreadManager>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, ThreadId>>>,
+    #[cfg(test)]
+    config: Arc<Config>,
 }
 
 impl MessageProcessor {
@@ -79,6 +81,8 @@ impl MessageProcessor {
             arg0_paths,
             thread_manager,
             running_requests_id_to_codex_uuid: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(test)]
+            config,
         }
     }
 
@@ -185,6 +189,13 @@ impl MessageProcessor {
                 tracing::warn!("ignoring custom client notification");
             }
         }
+    }
+
+    pub(crate) async fn process_cancelled_notification(
+        &mut self,
+        params: rmcp::model::CancelledNotificationParam,
+    ) {
+        self.handle_cancelled_notification(params).await;
     }
 
     pub(crate) fn process_error(&mut self, err: JsonRpcError) {
@@ -584,7 +595,7 @@ impl MessageProcessor {
                 let result = create_call_tool_result_for_codex_status(
                     thread_id,
                     "errored",
-                    None,
+                    /*token_usage_info*/ None,
                     error,
                     Some(true),
                 );
@@ -602,7 +613,7 @@ impl MessageProcessor {
             status,
             token_usage_info.as_ref(),
             summary,
-            None,
+            /*is_error*/ None,
         );
         self.outgoing.send_response(request_id, result).await;
     }
@@ -688,6 +699,36 @@ impl MessageProcessor {
 
     fn handle_initialized_notification(&self) {
         tracing::info!("notifications/initialized");
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn send_custom_request_for_test(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> tokio::sync::oneshot::Receiver<serde_json::Value> {
+        self.outgoing.send_request(method, params).await
+    }
+
+    pub(crate) async fn shutdown_session_threads(&self, timeout: std::time::Duration) {
+        let _ = self
+            .thread_manager
+            .shutdown_all_threads_bounded(timeout)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn start_test_thread(&self) -> anyhow::Result<ThreadId> {
+        let new_thread = self
+            .thread_manager
+            .start_thread((*self.config).clone())
+            .await?;
+        Ok(new_thread.thread_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn thread_count_for_test(&self) -> usize {
+        self.thread_manager.list_thread_ids().await.len()
     }
 }
 
