@@ -16,7 +16,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-3 | Wire direct `codex-mcp-server` binary listen input | `Completed` | `100%` |
 | ST-4 | Extract current stdio runtime into dedicated module | `Completed` | `100%` |
 | ST-5 | Add runtime transport dispatch in `run_main` | `Completed` | `100%` |
-| ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Not Started` | `0%` |
+| ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Completed` | `100%` |
 | ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Not Started` | `0%` |
 | ST-8 | Add per-session runtime scaffold + pending map | `Not Started` | `0%` |
 | ST-9 | Bridge response/error/notification message flow | `Not Started` | `0%` |
@@ -96,17 +96,17 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** runtime selection works and default remains stdio-safe.
 
 ### ST-6: Add HTTP server skeleton + `/healthz` + `/readyz`
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Implement HTTP server startup and health/readiness routes, but keep MCP bridge logic minimal.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/http_runtime.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/Cargo.toml` (if deps are added)
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/BUILD.bazel` (if Bazel deps/data update needed)
 - **Checklist:**
-  - [ ] Start `axum` server on configured address.
-  - [ ] Add `/healthz` and `/readyz` returning HTTP 200.
-  - [ ] Keep endpoint wiring clean for later MCP handler injection.
+  - [x] Start `axum` server on configured address.
+  - [x] Add `/healthz` and `/readyz` returning HTTP 200.
+  - [x] Keep endpoint wiring clean for later MCP handler injection.
 - **Done when:** server boots and health endpoints work independently.
 
 ### ST-7: Mount Streamable HTTP MCP endpoint path handling

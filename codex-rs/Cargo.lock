@@ -2226,6 +2226,7 @@ name = "codex-mcp-server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "axum",
  "codex-arg0",
  "codex-core",
  "codex-features",
@@ -2237,6 +2238,7 @@ dependencies = [
  "mcp_test_support",
  "os_info",
  "pretty_assertions",
+ "reqwest",
  "rmcp",
  "schemars 0.8.22",
  "serde",
