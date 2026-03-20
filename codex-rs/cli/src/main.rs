@@ -1647,9 +1647,18 @@ mod tests {
     #[test]
     fn mcp_server_listen_parses_when_present() {
         let mcp_server = mcp_server_from_args(
-            ["codex", "mcp-server", "--listen", "ws://127.0.0.1:4500"].as_ref(),
+            [
+                "codex",
+                "mcp-server",
+                "--listen",
+                "http://127.0.0.1:4500/mcp",
+            ]
+            .as_ref(),
         );
-        assert_eq!(mcp_server.listen.as_deref(), Some("ws://127.0.0.1:4500"));
+        assert_eq!(
+            mcp_server.listen.as_deref(),
+            Some("http://127.0.0.1:4500/mcp")
+        );
     }
 
     #[test]

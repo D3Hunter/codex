@@ -5868,6 +5868,7 @@ dependencies = [
  "core_test_support",
  "os_info",
  "pretty_assertions",
+ "reqwest",
  "rmcp",
  "serde",
  "serde_json",
