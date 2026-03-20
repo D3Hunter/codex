@@ -222,7 +222,7 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - If the user's message clearly means "ship and reset" (for example `ship-and-reset`,
   `ship and reset`, `ship/reset`, `commit pr merge cleanup`, or close variants),
   run the full integration flow in one pass:
-  1. Run verification (`go test ./...`) and stop if it fails.
+  1. Run verification and stop if it fails.
   2. Stage all changes, commit with a concise diff-based message, and push the
      current branch.
   3. Open a PR against `fork` with title and description derived from the actual
