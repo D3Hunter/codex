@@ -17,7 +17,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-4 | Extract current stdio runtime into dedicated module | `Completed` | `100%` |
 | ST-5 | Add runtime transport dispatch in `run_main` | `Completed` | `100%` |
 | ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Completed` | `100%` |
-| ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Not Started` | `0%` |
+| ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Completed` | `100%` |
 | ST-8 | Add per-session runtime scaffold + pending map | `Not Started` | `0%` |
 | ST-9 | Bridge response/error/notification message flow | `Not Started` | `0%` |
 | ST-10 | Bridge approval requests + session cleanup/cancel | `Not Started` | `0%` |
@@ -110,16 +110,16 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** server boots and health endpoints work independently.
 
 ### ST-7: Mount Streamable HTTP MCP endpoint path handling
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Add Streamable HTTP MCP route wiring with configured endpoint path and `/mcp` default behavior.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/http_runtime.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/transport.rs`
 - **Checklist:**
-  - [ ] Wire `rmcp::transport::StreamableHttpService` + `LocalSessionManager`.
-  - [ ] Mount handler at parsed path.
-  - [ ] Verify path-default logic is respected.
+  - [x] Wire `rmcp::transport::StreamableHttpService` + `LocalSessionManager`.
+  - [x] Mount handler at parsed path.
+  - [x] Verify path-default logic is respected.
 - **Done when:** HTTP MCP endpoint accepts initialize handshake requests.
 
 ### ST-8: Add per-session runtime scaffold + pending map
