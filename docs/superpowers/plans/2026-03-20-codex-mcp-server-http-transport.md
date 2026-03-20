@@ -18,7 +18,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-5 | Add runtime transport dispatch in `run_main` | `Completed` | `100%` |
 | ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Completed` | `100%` |
 | ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Completed` | `100%` |
-| ST-8 | Add per-session runtime scaffold + pending map | `Not Started` | `0%` |
+| ST-8 | Add per-session runtime scaffold + pending map | `Completed` | `100%` |
 | ST-9 | Bridge response/error/notification message flow | `Not Started` | `0%` |
 | ST-10 | Bridge approval requests + session cleanup/cancel | `Not Started` | `0%` |
 | ST-11 | Update docs + CLI help for HTTP transport usage | `Not Started` | `0%` |
@@ -123,8 +123,8 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** HTTP MCP endpoint accepts initialize handshake requests.
 
 ### ST-8: Add per-session runtime scaffold + pending map
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** For each HTTP session, create isolated processor/outgoing bridge state and pending response bookkeeping.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/http_runtime.rs`
@@ -132,9 +132,9 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/message_processor.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/outgoing_message.rs`
 - **Checklist:**
-  - [ ] Create per-session `MessageProcessor` and outgoing channel bridge.
-  - [ ] Maintain pending-response map keyed by synthetic request IDs per session.
-  - [ ] Keep session state isolated so concurrent traffic cannot collide.
+- [x] Create per-session `MessageProcessor` and outgoing channel bridge.
+- [x] Maintain pending-response map keyed by synthetic request IDs per session.
+- [x] Keep session state isolated so concurrent traffic cannot collide.
 - **Done when:** concurrent sessions are isolated at runtime state level.
 
 ### ST-9: Bridge response/error/notification message flow

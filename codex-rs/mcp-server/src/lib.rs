@@ -19,6 +19,7 @@ mod http_runtime;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
+mod session_runtime;
 mod stdio_runtime;
 mod transport;
 
