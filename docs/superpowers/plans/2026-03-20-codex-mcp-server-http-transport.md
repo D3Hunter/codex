@@ -11,7 +11,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 
 | ID | Subtask | Status | Progress |
 | --- | --- | --- | --- |
-| ST-1 | Add `--listen` to `codex mcp-server` CLI path | `Not Started` | `0%` |
+| ST-1 | Add `--listen` to `codex mcp-server` CLI path | `Completed` | `100%` |
 | ST-2 | Implement transport URL parser + parser unit tests | `Not Started` | `0%` |
 | ST-3 | Wire direct `codex-mcp-server` binary listen input | `Not Started` | `0%` |
 | ST-4 | Extract current stdio runtime into dedicated module | `Not Started` | `0%` |
@@ -29,16 +29,16 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 Target size for each subtask: keep changes around `100-500` LoC where possible (code + tests + docs), and split further if a subtask grows beyond that.
 
 ### ST-1: Add `--listen` to `codex mcp-server` CLI path
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Add `--listen <URL>` to the multitool CLI subcommand surface only (`codex mcp-server`), preserving current default behavior.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/cli/src/main.rs`
   - `/Users/jujiajia/code/codex/codex-rs/cli/src/chatgpt_cli.rs` (if option wiring lives here)
 - **Checklist:**
-  - [ ] Add `--listen` option to `mcp-server` command parsing.
-  - [ ] Preserve default launch behavior when option is omitted.
-  - [ ] Keep this subtask scoped to CLI plumbing only.
+  - [x] Add `--listen` option to `mcp-server` command parsing.
+  - [x] Preserve default launch behavior when option is omitted.
+  - [x] Keep this subtask scoped to CLI plumbing only.
 - **Done when:** `codex mcp-server --help` exposes `--listen` and behavior is unchanged without it.
 
 ### ST-2: Implement transport URL parser + parser unit tests

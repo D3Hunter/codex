@@ -103,8 +103,8 @@ enum Subcommand {
     /// Manage external MCP servers for Codex.
     Mcp(McpCli),
 
-    /// Start Codex as an MCP server (stdio).
-    McpServer,
+    /// Start Codex as an MCP server (stdio by default).
+    McpServer(McpServerCommand),
 
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
@@ -349,6 +349,13 @@ struct AppServerCommand {
     /// See https://developers.openai.com/codex/config-advanced/#metrics for more details.
     #[arg(long = "analytics-default-enabled")]
     analytics_default_enabled: bool,
+}
+
+#[derive(Debug, Parser)]
+struct McpServerCommand {
+    /// Transport endpoint URL.
+    #[arg(long = "listen", value_name = "URL")]
+    listen: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -629,7 +636,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             );
             codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
         }
-        Some(Subcommand::McpServer) => {
+        Some(Subcommand::McpServer(cmd)) => {
+            let _listen = cmd.listen;
             reject_remote_mode_for_subcommand(root_remote.as_deref(), "mcp-server")?;
             codex_mcp_server::run_main(arg0_paths.clone(), root_config_overrides).await?;
         }
@@ -1385,6 +1393,14 @@ mod tests {
         app_server
     }
 
+    fn mcp_server_from_args(args: &[&str]) -> McpServerCommand {
+        let cli = MultitoolCli::try_parse_from(args).expect("parse");
+        let Subcommand::McpServer(mcp_server) = cli.subcommand.expect("mcp-server present") else {
+            unreachable!()
+        };
+        mcp_server
+    }
+
     fn sample_exit_info(conversation_id: Option<&str>, thread_name: Option<&str>) -> AppExitInfo {
         let token_usage = TokenUsage {
             output_tokens: 2,
@@ -1620,6 +1636,20 @@ mod tests {
         let app_server =
             app_server_from_args(["codex", "app-server", "--analytics-default-enabled"].as_ref());
         assert!(app_server.analytics_default_enabled);
+    }
+
+    #[test]
+    fn mcp_server_listen_parses_when_present() {
+        let mcp_server = mcp_server_from_args(
+            ["codex", "mcp-server", "--listen", "ws://127.0.0.1:4500"].as_ref(),
+        );
+        assert_eq!(mcp_server.listen.as_deref(), Some("ws://127.0.0.1:4500"));
+    }
+
+    #[test]
+    fn mcp_server_listen_defaults_to_none_when_omitted() {
+        let mcp_server = mcp_server_from_args(["codex", "mcp-server"].as_ref());
+        assert_eq!(mcp_server.listen, None);
     }
 
     #[test]
