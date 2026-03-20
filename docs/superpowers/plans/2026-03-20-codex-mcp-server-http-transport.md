@@ -14,7 +14,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-1 | Add `--listen` to `codex mcp-server` CLI path | `Completed` | `100%` |
 | ST-2 | Implement transport URL parser + parser unit tests | `Completed` | `100%` |
 | ST-3 | Wire direct `codex-mcp-server` binary listen input | `Completed` | `100%` |
-| ST-4 | Extract current stdio runtime into dedicated module | `Not Started` | `0%` |
+| ST-4 | Extract current stdio runtime into dedicated module | `Completed` | `100%` |
 | ST-5 | Add runtime transport dispatch in `run_main` | `Not Started` | `0%` |
 | ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Not Started` | `0%` |
 | ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Not Started` | `0%` |
@@ -68,17 +68,17 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** binary startup path can pass selected transport into runtime.
 
 ### ST-4: Extract current stdio runtime into dedicated module
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Move current stdio processing loop into `stdio_runtime` module without behavior changes.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/lib.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/stdio_runtime.rs` (new)
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/main.rs`
 - **Checklist:**
-  - [ ] Extract stdin reader / processor / stdout writer orchestration into module.
-  - [ ] Keep existing logging and channel behavior unchanged.
-  - [ ] Keep tests green with no HTTP logic introduced yet.
+  - [x] Extract stdin reader / processor / stdout writer orchestration into module.
+  - [x] Keep existing logging and channel behavior unchanged.
+  - [ ] Keep tests green with no HTTP logic introduced yet. Blocked by pre-existing `mcp-server/src/message_processor.rs` compile failure for missing `AgentStatus::Interrupted` match coverage.
 - **Done when:** stdio-only execution is functionally unchanged after extraction.
 
 ### ST-5: Add runtime transport dispatch in `run_main`
