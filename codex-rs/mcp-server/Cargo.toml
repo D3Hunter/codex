@@ -17,6 +17,10 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+axum = { workspace = true, default-features = false, features = [
+    "http1",
+    "tokio",
+] }
 codex-arg0 = { workspace = true }
 codex-core = { workspace = true }
 codex-features = { workspace = true }
@@ -44,5 +48,6 @@ core_test_support = { workspace = true }
 mcp_test_support = { workspace = true }
 os_info = { workspace = true }
 pretty_assertions = { workspace = true }
+reqwest = { workspace = true, features = ["rustls-tls"] }
 tempfile = { workspace = true }
 wiremock = { workspace = true }
