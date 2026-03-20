@@ -13,7 +13,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | --- | --- | --- | --- |
 | ST-1 | Add `--listen` to `codex mcp-server` CLI path | `Completed` | `100%` |
 | ST-2 | Implement transport URL parser + parser unit tests | `Completed` | `100%` |
-| ST-3 | Wire direct `codex-mcp-server` binary listen input | `Not Started` | `0%` |
+| ST-3 | Wire direct `codex-mcp-server` binary listen input | `Completed` | `100%` |
 | ST-4 | Extract current stdio runtime into dedicated module | `Not Started` | `0%` |
 | ST-5 | Add runtime transport dispatch in `run_main` | `Not Started` | `0%` |
 | ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Not Started` | `0%` |
@@ -55,16 +55,16 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** parser is independently tested and ready for CLI/runtime consumption.
 
 ### ST-3: Wire direct `codex-mcp-server` binary listen input
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Connect binary entrypoint to parsed listen transport with `stdio://` default semantics.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/main.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/lib.rs`
 - **Checklist:**
-  - [ ] Accept parsed listen value from CLI/binary args.
-  - [ ] Ensure omitted listen still maps to stdio.
-  - [ ] Keep behavior changes minimal and isolated from runtime internals.
+  - [x] Accept parsed listen value from CLI/binary args.
+  - [x] Ensure omitted listen still maps to stdio.
+  - [x] Keep behavior changes minimal and isolated from runtime internals.
 - **Done when:** binary startup path can pass selected transport into runtime.
 
 ### ST-4: Extract current stdio runtime into dedicated module

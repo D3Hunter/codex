@@ -59,6 +59,14 @@ pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
 ) -> IoResult<()> {
+    run_main_with_transport(arg0_paths, cli_config_overrides, McpListenTransport::Stdio).await
+}
+
+pub async fn run_main_with_transport(
+    arg0_paths: Arg0DispatchPaths,
+    cli_config_overrides: CliConfigOverrides,
+    _listen_transport: McpListenTransport,
+) -> IoResult<()> {
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
     let cli_kv_overrides = cli_config_overrides.parse_overrides().map_err(|e| {
