@@ -19,7 +19,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Completed` | `100%` |
 | ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Completed` | `100%` |
 | ST-8 | Add per-session runtime scaffold + pending map | `Completed` | `100%` |
-| ST-9 | Bridge response/error/notification message flow | `Not Started` | `0%` |
+| ST-9 | Bridge response/error/notification message flow | `Completed` | `100%` |
 | ST-10 | Bridge approval requests + session cleanup/cancel | `Not Started` | `0%` |
 | ST-11 | Update docs + CLI help for HTTP transport usage | `Not Started` | `0%` |
 | ST-12 | Add/refresh tests and run required verification | `Not Started` | `0%` |
@@ -138,17 +138,17 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** concurrent sessions are isolated at runtime state level.
 
 ### ST-9: Bridge response/error/notification message flow
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Complete routing for responses/errors/notifications from core runtime to HTTP peer.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/http_runtime.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/session_runtime.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/outgoing_message.rs`
 - **Checklist:**
-  - [ ] Route `OutgoingMessage::Response/Error` to matching pending waiter.
-  - [ ] Route `OutgoingMessage::Notification` to peer custom notification channel.
-  - [ ] Add focused tests for these mappings.
+- [x] Route `OutgoingMessage::Response/Error` to matching pending waiter.
+- [x] Route `OutgoingMessage::Notification` to peer custom notification channel.
+- [x] Add focused tests for these mappings.
 - **Done when:** response and notification routing is deterministic and tested.
 
 ### ST-10: Bridge approval requests + session cleanup/cancel
