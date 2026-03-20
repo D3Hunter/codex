@@ -13,6 +13,7 @@ use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
 use codex_shell_command::parse_command;
 use pretty_assertions::assert_eq;
+use reqwest::StatusCode;
 use rmcp::model::JsonRpcResponse;
 use rmcp::model::JsonRpcVersion2_0;
 use rmcp::model::RequestId;
@@ -22,6 +23,7 @@ use tokio::time::timeout;
 use wiremock::MockServer;
 
 use core_test_support::skip_if_no_network;
+use mcp_test_support::HttpMcpProcess;
 use mcp_test_support::McpProcess;
 use mcp_test_support::create_apply_patch_sse_response;
 use mcp_test_support::create_final_assistant_message_sse_response;
@@ -736,6 +738,159 @@ async fn tools_list_includes_codex_status() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_server_serves_health_endpoints_and_lists_tools() {
+    if env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        println!(
+            "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
+        );
+        return;
+    }
+
+    if let Err(err) = http_server_serves_health_endpoints_and_lists_tools_impl().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn http_server_serves_health_endpoints_and_lists_tools_impl() -> anyhow::Result<()> {
+    let HttpMcpHandle {
+        process,
+        server: _server,
+        dir: _dir,
+    } = create_http_mcp_process(vec![]).await?;
+
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client.get(process.healthz_url()).send().await?.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client.get(process.readyz_url()).send().await?.status(),
+        StatusCode::OK
+    );
+
+    let session = process.initialize_session().await?;
+    assert!(!session.session_id().is_empty());
+    assert_eq!(
+        tool_names(&session.list_tools().await?)?,
+        vec![
+            "codex".to_string(),
+            "codex-reply".to_string(),
+            "codex-status".to_string(),
+        ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_server_supports_concurrent_sessions() {
+    if env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        println!(
+            "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
+        );
+        return;
+    }
+
+    if let Err(err) = http_server_supports_concurrent_sessions_impl().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn http_server_supports_concurrent_sessions_impl() -> anyhow::Result<()> {
+    let HttpMcpHandle {
+        process,
+        server: _server,
+        dir: _dir,
+    } = create_http_mcp_process(vec![]).await?;
+
+    let (session_a, session_b) =
+        tokio::join!(process.initialize_session(), process.initialize_session());
+    let session_a = session_a?;
+    let session_b = session_b?;
+
+    assert_ne!(session_a.session_id(), session_b.session_id());
+
+    let (tools_a, tools_b) = tokio::join!(session_a.list_tools(), session_b.list_tools());
+    assert_eq!(
+        tool_names(&tools_a?)?,
+        vec![
+            "codex".to_string(),
+            "codex-reply".to_string(),
+            "codex-status".to_string(),
+        ]
+    );
+    assert_eq!(
+        tool_names(&tools_b?)?,
+        vec![
+            "codex".to_string(),
+            "codex-reply".to_string(),
+            "codex-status".to_string(),
+        ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_server_codex_tool_call_happy_path() {
+    if env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
+        println!(
+            "Skipping test because it cannot execute when network is disabled in a Codex sandbox."
+        );
+        return;
+    }
+
+    if let Err(err) = http_server_codex_tool_call_happy_path_impl().await {
+        panic!("failure: {err}");
+    }
+}
+
+async fn http_server_codex_tool_call_happy_path_impl() -> anyhow::Result<()> {
+    let HttpMcpHandle {
+        process,
+        server: _server,
+        dir: _dir,
+    } = create_http_mcp_process(vec![create_final_assistant_message_sse_response("Enjoy!")?])
+        .await?;
+
+    let session = process.initialize_session().await?;
+    let response = session
+        .call_tool(
+            "codex",
+            serde_json::to_value(CodexToolCallParam {
+                prompt: "How are you?".to_string(),
+                base_instructions: Some("You are a helpful assistant.".to_string()),
+                developer_instructions: Some("Foreshadow upcoming tool calls.".to_string()),
+                ..Default::default()
+            })?,
+        )
+        .await?;
+
+    let thread_id = response
+        .get("structuredContent")
+        .and_then(|content| content.get("threadId"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("threadId missing from structuredContent"))?;
+    assert_eq!(
+        response,
+        json!({
+            "content": [
+                {
+                    "text": "Enjoy!",
+                    "type": "text"
+                }
+            ],
+            "structuredContent": {
+                "threadId": thread_id,
+                "content": "Enjoy!"
+            }
+        })
+    );
+
+    Ok(())
+}
+
 fn create_expected_patch_approval_elicitation_request_params(
     changes: HashMap<PathBuf, FileChange>,
     grant_root: Option<PathBuf>,
@@ -777,6 +932,15 @@ pub struct McpHandle {
     dir: TempDir,
 }
 
+/// This handle keeps the HTTP server and its backing temp dir alive for the duration of the test.
+pub struct HttpMcpHandle {
+    pub process: HttpMcpProcess,
+    #[allow(dead_code)]
+    server: MockServer,
+    #[allow(dead_code)]
+    dir: TempDir,
+}
+
 async fn create_mcp_process(responses: Vec<String>) -> anyhow::Result<McpHandle> {
     let server = create_mock_responses_server(responses).await;
     let codex_home = TempDir::new()?;
@@ -788,6 +952,31 @@ async fn create_mcp_process(responses: Vec<String>) -> anyhow::Result<McpHandle>
         server,
         dir: codex_home,
     })
+}
+
+async fn create_http_mcp_process(responses: Vec<String>) -> anyhow::Result<HttpMcpHandle> {
+    let server = create_mock_responses_server(responses).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let process = HttpMcpProcess::new(codex_home.path()).await?;
+    Ok(HttpMcpHandle {
+        process,
+        server,
+        dir: codex_home,
+    })
+}
+
+fn tool_names(response: &serde_json::Value) -> anyhow::Result<Vec<String>> {
+    let tools = response
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("tools/list should return tools"))?;
+
+    Ok(tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+        .collect())
 }
 
 /// Create a Codex config that uses the mock server as the model provider.

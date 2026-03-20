@@ -22,7 +22,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-9 | Bridge response/error/notification message flow | `Completed` | `100%` |
 | ST-10 | Bridge approval requests + session cleanup/cancel | `Completed` | `100%` |
 | ST-11 | Update docs + CLI help for HTTP transport usage | `Completed` | `100%` |
-| ST-12 | Add/refresh tests and run required verification | `Not Started` | `0%` |
+| ST-12 | Add/refresh tests and run required verification | `Completed` | `100%` |
 
 ## Subtasks (Implement In Order)
 
@@ -183,8 +183,8 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** docs/help are accurate and runnable as written.
 
 ### ST-12: Add/refresh tests and run required verification
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Complete unit/integration/regression test coverage and required formatting/test commands.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/tests/suite/codex_tool.rs`

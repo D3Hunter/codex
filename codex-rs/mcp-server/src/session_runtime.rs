@@ -6,6 +6,8 @@ use std::sync::atomic::Ordering;
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
 use rmcp::ServerHandler;
+use rmcp::model::CallToolResult;
+use rmcp::model::ClientRequest;
 use rmcp::model::CustomNotification;
 use rmcp::model::CustomRequest;
 use rmcp::model::ErrorData;
@@ -13,12 +15,15 @@ use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::InitializeResult;
 use rmcp::model::JsonRpcRequest;
+use rmcp::model::ListToolsRequest;
+use rmcp::model::ListToolsResult;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::RequestId;
 use rmcp::model::ServerCapabilities;
 use rmcp::model::ServerInfo;
 use rmcp::model::ServerNotification;
 use rmcp::model::ServerRequest;
+use rmcp::model::ToolsCapability;
 use rmcp::service::NotificationContext;
 use rmcp::service::Peer;
 use rmcp::service::RequestContext;
@@ -157,7 +162,12 @@ impl ServerHandler for SessionRuntime {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_03_26,
-            capabilities: ServerCapabilities::default(),
+            capabilities: ServerCapabilities {
+                tools: Some(ToolsCapability {
+                    list_changed: Some(true),
+                }),
+                ..Default::default()
+            },
             server_info: Implementation {
                 name: "codex-mcp-server".to_string(),
                 title: Some("Codex".to_string()),
@@ -180,6 +190,64 @@ impl ServerHandler for SessionRuntime {
             .await
             .process_cancelled_notification(notification)
             .await;
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        self.run_processor_request(ClientRequest::ListToolsRequest(ListToolsRequest::default()))
+            .await
+    }
+
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.run_processor_request(ClientRequest::CallToolRequest(
+            rmcp::model::CallToolRequest::new(request),
+        ))
+        .await
+    }
+}
+
+impl SessionRuntime {
+    async fn run_processor_request<T>(&self, request: ClientRequest) -> Result<T, rmcp::ErrorData>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let pending = self.reserve_pending_response().await;
+        self.process_request(JsonRpcRequest {
+            jsonrpc: rmcp::model::JsonRpcVersion2_0,
+            id: pending.id.clone(),
+            request,
+        })
+        .await;
+
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), pending.receiver)
+            .await
+            .map_err(|_| {
+                rmcp::ErrorData::internal_error(
+                    "timed out waiting for processor response".to_string(),
+                    None,
+                )
+            })?
+            .map_err(|_| {
+                rmcp::ErrorData::internal_error(
+                    "processor response channel closed".to_string(),
+                    None,
+                )
+            })?;
+
+        let result = response?;
+        serde_json::from_value(result).map_err(|err| {
+            rmcp::ErrorData::internal_error(
+                format!("failed to decode processor response: {err}"),
+                None,
+            )
+        })
     }
 }
 

@@ -31,6 +31,23 @@ use rmcp::model::ProtocolVersion;
 use rmcp::model::RequestId;
 use serde_json::json;
 use tokio::process::Command;
+use tokio::time::Duration;
+use tokio::time::sleep;
+
+pub struct HttpMcpProcess {
+    #[allow(dead_code)]
+    process: Child,
+    client: reqwest::Client,
+    http_origin: String,
+    base_url: String,
+}
+
+pub struct HttpMcpSession {
+    client: reqwest::Client,
+    base_url: String,
+    session_id: String,
+    next_request_id: AtomicI64,
+}
 
 pub struct McpProcess {
     next_request_id: AtomicI64,
@@ -218,7 +235,7 @@ impl McpProcess {
         });
         let tool_call_params = CallToolRequestParams {
             meta: None,
-            name: tool_name.into(),
+            name: tool_name.to_string().into(),
             arguments,
             task: None,
         };
@@ -227,7 +244,7 @@ impl McpProcess {
     }
 
     pub async fn send_list_tools_request(&mut self) -> anyhow::Result<i64> {
-        self.send_request("tools/list", None).await
+        self.send_request("tools/list", /*params*/ None).await
     }
 
     async fn send_request(
@@ -376,6 +393,365 @@ impl McpProcess {
                     anyhow::bail!("unexpected JSONRPCMessage::Response: {message:?}");
                 }
             }
+        }
+    }
+}
+
+impl HttpMcpProcess {
+    pub async fn new(codex_home: &Path) -> anyhow::Result<Self> {
+        Self::new_with_env(codex_home, &[]).await
+    }
+
+    pub async fn new_with_env(
+        codex_home: &Path,
+        env_overrides: &[(&str, Option<&str>)],
+    ) -> anyhow::Result<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let bind_address = listener.local_addr()?;
+        drop(listener);
+
+        let program = codex_utils_cargo_bin::cargo_bin("codex-mcp-server")
+            .context("should find binary for codex-mcp-server")?;
+        let mut cmd = Command::new(program);
+
+        cmd.arg("--listen").arg(format!("http://{bind_address}"));
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::piped());
+        cmd.env("CODEX_HOME", codex_home);
+        cmd.env("RUST_LOG", "debug");
+
+        for (k, v) in env_overrides {
+            match v {
+                Some(val) => {
+                    cmd.env(k, val);
+                }
+                None => {
+                    cmd.env_remove(k);
+                }
+            }
+        }
+
+        let mut process = cmd
+            .kill_on_drop(true)
+            .spawn()
+            .context("codex-mcp-server proc should start")?;
+        if let Some(stderr) = process.stderr.take() {
+            let mut stderr_reader = BufReader::new(stderr).lines();
+            tokio::spawn(async move {
+                while let Ok(Some(line)) = stderr_reader.next_line().await {
+                    eprintln!("[mcp http stderr] {line}");
+                }
+            });
+        }
+
+        let client = reqwest::Client::builder().build()?;
+        let base_url = format!("http://{bind_address}/mcp");
+        wait_for_http_probe(&client, format!("http://{bind_address}/healthz")).await?;
+        wait_for_http_probe(&client, format!("http://{bind_address}/readyz")).await?;
+
+        Ok(Self {
+            process,
+            client,
+            http_origin: format!("http://{bind_address}"),
+            base_url,
+        })
+    }
+
+    pub fn healthz_url(&self) -> String {
+        format!("{}/healthz", self.http_origin)
+    }
+
+    pub fn readyz_url(&self) -> String {
+        format!("{}/readyz", self.http_origin)
+    }
+
+    pub fn mcp_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub async fn initialize_session(&self) -> anyhow::Result<HttpMcpSession> {
+        let params = InitializeRequestParams {
+            meta: None,
+            capabilities: ClientCapabilities {
+                elicitation: Some(ElicitationCapability {
+                    form: Some(FormElicitationCapability {
+                        schema_validation: None,
+                    }),
+                    url: None,
+                }),
+                experimental: None,
+                extensions: None,
+                roots: None,
+                sampling: None,
+                tasks: None,
+            },
+            client_info: Implementation {
+                name: "elicitation test".into(),
+                title: Some("Elicitation Test".into()),
+                version: "0.0.0".into(),
+                description: None,
+                icons: None,
+                website_url: None,
+            },
+            protocol_version: ProtocolVersion::V_2025_03_26,
+        };
+        let params_value = serde_json::to_value(params)?;
+        let init_session =
+            HttpMcpSession::new(self.client.clone(), self.base_url.clone(), String::new());
+        let response = init_session
+            .send_raw_jsonrpc(JsonRpcMessage::Request(JsonRpcRequest {
+                jsonrpc: JsonRpcVersion2_0,
+                id: RequestId::Number(0),
+                request: CustomRequest::new("initialize", Some(params_value)),
+            }))
+            .await?;
+        let session_id = response
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|value| value.to_str().ok())
+            .map(ToString::to_string)
+            .ok_or_else(|| anyhow::anyhow!("initialize response should include mcp-session-id"))?;
+        let response = parse_jsonrpc_response(response, RequestId::Number(0)).await?;
+
+        let JsonRpcMessage::Response(JsonRpcResponse {
+            jsonrpc,
+            id,
+            result,
+        }) = response
+        else {
+            anyhow::bail!("expected initialize response message");
+        };
+        assert_eq!(jsonrpc, JsonRpcVersion2_0);
+        assert_eq!(id, RequestId::Number(0));
+        let result = result
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("initialize result should be a JSON object"))?;
+        assert_eq!(
+            result
+                .get("capabilities")
+                .ok_or_else(|| anyhow::anyhow!("initialize result should include capabilities"))?,
+            &json!({
+                "tools": {
+                    "listChanged": true
+                }
+            })
+        );
+        let server_info = result
+            .get("serverInfo")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("initialize result should include serverInfo"))?;
+        assert_eq!(server_info.get("name"), Some(&json!("codex-mcp-server")),);
+        assert_eq!(server_info.get("title"), Some(&json!("Codex")));
+        assert_eq!(server_info.get("version"), Some(&json!("0.0.0")));
+        assert_eq!(
+            result
+                .get("protocolVersion")
+                .ok_or_else(|| anyhow::anyhow!(
+                    "initialize result should include protocolVersion"
+                ))?,
+            &json!(ProtocolVersion::V_2025_03_26)
+        );
+
+        let session = HttpMcpSession::new(self.client.clone(), self.base_url.clone(), session_id);
+        session
+            .send_notification("notifications/initialized", /*params*/ None)
+            .await?;
+
+        Ok(session)
+    }
+}
+
+impl HttpMcpSession {
+    fn new(client: reqwest::Client, base_url: String, session_id: String) -> Self {
+        Self {
+            client,
+            base_url,
+            session_id,
+            next_request_id: AtomicI64::new(0),
+        }
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub async fn list_tools(&self) -> anyhow::Result<serde_json::Value> {
+        self.send_request("tools/list", /*params*/ None).await
+    }
+
+    pub async fn call_tool(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let tool_call_params = CallToolRequestParams {
+            meta: None,
+            name: tool_name.to_string().into(),
+            arguments: Some(match arguments {
+                serde_json::Value::Object(map) => map,
+                _ => anyhow::bail!("tool arguments should serialize to an object"),
+            }),
+            task: None,
+        };
+        self.send_request("tools/call", Some(serde_json::to_value(tool_call_params)?))
+            .await
+    }
+
+    async fn send_request(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let response = self
+            .send_jsonrpc_request(
+                JsonRpcMessage::Request(JsonRpcRequest {
+                    jsonrpc: JsonRpcVersion2_0,
+                    id: RequestId::Number(request_id),
+                    request: CustomRequest::new(method, params),
+                }),
+                RequestId::Number(request_id),
+            )
+            .await?;
+        match response {
+            JsonRpcMessage::Response(JsonRpcResponse { result, .. }) => Ok(result),
+            JsonRpcMessage::Error(error) => {
+                anyhow::bail!("unexpected JSON-RPC error: {error:?}");
+            }
+            JsonRpcMessage::Notification(notification) => {
+                anyhow::bail!("unexpected JSON-RPC notification: {notification:?}");
+            }
+            JsonRpcMessage::Request(request) => {
+                anyhow::bail!("unexpected JSON-RPC request: {request:?}");
+            }
+        }
+    }
+
+    async fn send_notification(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let response = self
+            .send_raw_jsonrpc(JsonRpcMessage::Notification(JsonRpcNotification {
+                jsonrpc: JsonRpcVersion2_0,
+                notification: CustomNotification::new(method, params),
+            }))
+            .await?;
+        if !response.status().is_success() {
+            anyhow::bail!("notification `{method}` failed with {}", response.status());
+        }
+        Ok(())
+    }
+
+    async fn send_jsonrpc_request(
+        &self,
+        message: JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>,
+        expected_request_id: RequestId,
+    ) -> anyhow::Result<JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>> {
+        let response = self.send_raw_jsonrpc(message).await?;
+        parse_jsonrpc_response(response, expected_request_id).await
+    }
+
+    async fn send_raw_jsonrpc(
+        &self,
+        message: JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>,
+    ) -> anyhow::Result<reqwest::Response> {
+        let mut request = self
+            .client
+            .post(&self.base_url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream");
+        if !self.session_id.is_empty() {
+            request = request.header("Mcp-Session-Id", &self.session_id);
+        }
+        Ok(request.json(&message).send().await?)
+    }
+}
+
+async fn wait_for_http_probe(client: &reqwest::Client, url: String) -> anyhow::Result<()> {
+    for _ in 0..400 {
+        if let Ok(response) = client.get(&url).send().await
+            && response.status().is_success()
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    anyhow::bail!("timed out waiting for {url}");
+}
+
+async fn parse_jsonrpc_response(
+    response: reqwest::Response,
+    expected_request_id: RequestId,
+) -> anyhow::Result<JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>> {
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let body = response.text().await?;
+
+    if content_type.starts_with("application/json") || content_type.is_empty() {
+        let message = serde_json::from_str::<
+            JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>,
+        >(&body)?;
+        return ensure_expected_response(message, expected_request_id);
+    }
+
+    if content_type.starts_with("text/event-stream") {
+        for event in body.split("\n\n") {
+            let mut data_lines = Vec::new();
+            for line in event.lines() {
+                if let Some(data) = line.strip_prefix("data:") {
+                    data_lines.push(data.trim_start());
+                }
+            }
+            let data = data_lines.join("\n");
+
+            if data.is_empty() {
+                continue;
+            }
+
+            if let Ok(message) = serde_json::from_str::<
+                JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>,
+            >(&data)
+                && let Ok(response) = ensure_expected_response(message, expected_request_id.clone())
+            {
+                return Ok(response);
+            }
+        }
+
+        anyhow::bail!("no JSON-RPC response found in SSE body: {body}");
+    }
+
+    anyhow::bail!("unexpected content type `{content_type}`");
+}
+
+fn ensure_expected_response(
+    message: JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>,
+    expected_request_id: RequestId,
+) -> anyhow::Result<JsonRpcMessage<CustomRequest, serde_json::Value, CustomNotification>> {
+    match &message {
+        JsonRpcMessage::Response(response) if response.id == expected_request_id => Ok(message),
+        JsonRpcMessage::Response(response) => {
+            anyhow::bail!(
+                "unexpected response id {:?}, expected {:?}",
+                response.id,
+                expected_request_id
+            );
+        }
+        JsonRpcMessage::Error(error) => {
+            anyhow::bail!("unexpected JSON-RPC error: {error:?}");
+        }
+        JsonRpcMessage::Notification(notification) => {
+            anyhow::bail!("unexpected JSON-RPC notification: {notification:?}");
+        }
+        JsonRpcMessage::Request(request) => {
+            anyhow::bail!("unexpected JSON-RPC request: {request:?}");
         }
     }
 }
