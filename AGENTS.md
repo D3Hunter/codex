@@ -195,3 +195,38 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - Validate with `cargo test -p codex-app-server-protocol`.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.
+
+## Special Handling Branches
+
+- When adding special-case handling branches (for example compatibility fallbacks,
+  provider quirks, or non-obvious guard paths), add an in-code comment explaining
+  why the branch exists.
+
+## PR Workflow
+
+- Do not use a `[codex]` prefix in PR titles.
+- When filing a PR, generate the title and description from the actual diff against
+  `fork`.
+- Keep PR descriptions short and include only:
+  1. A brief summary of what changed.
+  2. A brief summary of tests that were added.
+- Do not include process or meta notes in PR descriptions (for example, notes about
+  intentionally omitting the `[codex]` prefix).
+- After merging a PR and rolling out to a new workspace:
+  1. Run `git fetch --prune` to remove stale remote branches.
+  2. Pull the latest `fork`.
+  3. Switch to a fresh new working branch created from the updated `fork`.
+
+## Shortcut Prompt
+
+- If the user's message clearly means "ship and reset" (for example `ship-and-reset`,
+  `ship and reset`, `ship/reset`, `commit pr merge cleanup`, or close variants),
+  run the full integration flow in one pass:
+  1. Run verification and stop if it fails.
+  2. Stage all changes, commit with a concise diff-based message, and push the
+     current branch.
+  3. Open a PR against `fork` with title and description derived from the actual
+     diff.
+  4. Merge the PR.
+  5. Run cleanup: `git fetch --prune`, pull latest `fork`, and switch to a fresh
+     `codex/` branch from updated `fork`.
