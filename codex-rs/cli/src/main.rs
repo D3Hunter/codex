@@ -354,6 +354,12 @@ struct AppServerCommand {
 #[derive(Debug, Parser)]
 struct McpServerCommand {
     /// Transport endpoint URL.
+    ///
+    /// Supported values:
+    /// - `stdio://` (default)
+    /// - `http://IP:PORT[/PATH]` (Streamable HTTP; default path `/mcp` if omitted)
+    ///
+    /// For local-only exposure, use `http://127.0.0.1:PORT[/PATH]`.
     #[arg(long = "listen", value_name = "URL")]
     listen: Option<String>,
 }

@@ -4,7 +4,7 @@ This document describes Codex's experimental MCP server interface: a JSON-RPC AP
 
 - Status: experimental and subject to change without notice
 - Server binary: `codex mcp-server` (or `codex-mcp-server`)
-- Transport: standard MCP over stdio (JSON-RPC 2.0, line-delimited)
+- Transport: standard MCP over stdio by default (JSON-RPC 2.0, line-delimited). Optional Streamable HTTP mode is available via `--listen`.
 
 ## Overview
 
@@ -34,16 +34,43 @@ See code for full type definitions and exact shapes: `app-server-protocol/src/pr
 
 ## Starting the server
 
-Run Codex as an MCP server and connect an MCP client:
+Run Codex as an MCP server and connect an MCP client.
+
+Default transport is stdio (pipe mode):
 
 ```bash
 codex mcp-server | your_mcp_client
+```
+
+For Streamable HTTP transport, use `--listen`:
+
+```bash
+codex mcp-server --listen http://127.0.0.1:8080
+```
+
+This starts the MCP endpoint at `http://127.0.0.1:8080/mcp`. To customize the endpoint path:
+
+```bash
+codex mcp-server --listen http://127.0.0.1:8080/mcp/custom
+```
+
+Optional health probes for Streamable HTTP mode:
+
+```bash
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/readyz
 ```
 
 For a simple inspection UI, you can also try:
 
 ```bash
 npx @modelcontextprotocol/inspector codex mcp-server
+```
+
+If you run HTTP mode for remote or shared-network use, bind explicitly to the desired interface and keep security requirements in mind. For local-only usage, prefer `127.0.0.1`:
+
+```bash
+codex mcp-server --listen http://127.0.0.1:8080
 ```
 
 Use the separate `codex mcp` subcommand to manage configured MCP server launchers in `config.toml`.
