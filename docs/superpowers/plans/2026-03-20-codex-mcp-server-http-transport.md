@@ -15,7 +15,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-2 | Implement transport URL parser + parser unit tests | `Completed` | `100%` |
 | ST-3 | Wire direct `codex-mcp-server` binary listen input | `Completed` | `100%` |
 | ST-4 | Extract current stdio runtime into dedicated module | `Completed` | `100%` |
-| ST-5 | Add runtime transport dispatch in `run_main` | `Not Started` | `0%` |
+| ST-5 | Add runtime transport dispatch in `run_main` | `Completed` | `100%` |
 | ST-6 | Add HTTP server skeleton + `/healthz` + `/readyz` | `Not Started` | `0%` |
 | ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Not Started` | `0%` |
 | ST-8 | Add per-session runtime scaffold + pending map | `Not Started` | `0%` |
@@ -82,17 +82,17 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** stdio-only execution is functionally unchanged after extraction.
 
 ### ST-5: Add runtime transport dispatch in `run_main`
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Dispatch between stdio and HTTP runtime entrypoints using parsed transport.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/lib.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/stdio_runtime.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/http_runtime.rs` (stub/new)
 - **Checklist:**
-  - [ ] Add top-level match/dispatch for transport variants.
-  - [ ] Keep stdio branch as default.
-  - [ ] Add minimal dispatch tests if practical.
+  - [x] Add top-level match/dispatch for transport variants.
+  - [x] Keep stdio branch as default.
+  - [x] Add minimal dispatch tests for runtime selection.
 - **Done when:** runtime selection works and default remains stdio-safe.
 
 ### ST-6: Add HTTP server skeleton + `/healthz` + `/readyz`

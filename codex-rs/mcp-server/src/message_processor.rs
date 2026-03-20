@@ -697,6 +697,7 @@ fn codex_status_name(status: &AgentStatus) -> &'static str {
         AgentStatus::Running => "running",
         AgentStatus::Completed(_) => "completed",
         AgentStatus::Errored(_) => "errored",
+        AgentStatus::Interrupted => "interrupted",
         AgentStatus::Shutdown => "shutdown",
         AgentStatus::NotFound => "errored",
     }
@@ -785,5 +786,18 @@ fn codex_status_summary(status: &str, token_usage_info: Option<&TokenUsageInfo>)
             }
         }
         None => format!("status={status}; token usage unavailable"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use codex_protocol::protocol::AgentStatus;
+    use pretty_assertions::assert_eq;
+
+    use super::codex_status_name;
+
+    #[test]
+    fn codex_status_name_returns_interrupted_for_interrupted_status() {
+        assert_eq!(codex_status_name(&AgentStatus::Interrupted), "interrupted");
     }
 }
