@@ -2235,6 +2235,7 @@ dependencies = [
  "codex-utils-cli",
  "codex-utils-json-to-toml",
  "core_test_support",
+ "futures",
  "mcp_test_support",
  "os_info",
  "pretty_assertions",

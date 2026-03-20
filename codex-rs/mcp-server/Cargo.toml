@@ -28,6 +28,7 @@ codex-protocol = { workspace = true }
 codex-shell-command = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-json-to-toml = { workspace = true }
+futures = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = [
     "server",
     "transport-streamable-http-server",
