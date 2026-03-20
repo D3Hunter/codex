@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
@@ -47,6 +48,7 @@ type PendingResponse = Result<Value, ErrorData>;
 type PendingResponseSender = oneshot::Sender<PendingResponse>;
 type SessionPeer = Peer<RoleServer>;
 const SESSION_THREAD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const TRANSPORT_CLOSED_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
 
 pub(crate) struct SessionRuntime {
     processor: Arc<Mutex<MessageProcessor>>,
@@ -195,26 +197,34 @@ impl ServerHandler for SessionRuntime {
     async fn list_tools(
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, rmcp::ErrorData> {
-        self.run_processor_request(ClientRequest::ListToolsRequest(ListToolsRequest::default()))
-            .await
+        self.run_processor_request(
+            ClientRequest::ListToolsRequest(ListToolsRequest::default()),
+            context,
+        )
+        .await
     }
 
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        self.run_processor_request(ClientRequest::CallToolRequest(
-            rmcp::model::CallToolRequest::new(request),
-        ))
+        self.run_processor_request(
+            ClientRequest::CallToolRequest(rmcp::model::CallToolRequest::new(request)),
+            context,
+        )
         .await
     }
 }
 
 impl SessionRuntime {
-    async fn run_processor_request<T>(&self, request: ClientRequest) -> Result<T, rmcp::ErrorData>
+    async fn run_processor_request<T>(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<T, rmcp::ErrorData>
     where
         T: serde::de::DeserializeOwned,
     {
@@ -226,20 +236,12 @@ impl SessionRuntime {
         })
         .await;
 
-        let response = tokio::time::timeout(std::time::Duration::from_secs(5), pending.receiver)
-            .await
-            .map_err(|_| {
-                rmcp::ErrorData::internal_error(
-                    "timed out waiting for processor response".to_string(),
-                    None,
-                )
-            })?
-            .map_err(|_| {
-                rmcp::ErrorData::internal_error(
-                    "processor response channel closed".to_string(),
-                    None,
-                )
-            })?;
+        let request_cancelled = context.ct.cancelled();
+        let peer = context.peer;
+        let response = wait_for_pending_response(pending.receiver, request_cancelled, move || {
+            peer.is_transport_closed()
+        })
+        .await?;
 
         let result = response?;
         serde_json::from_value(result).map_err(|err| {
@@ -248,6 +250,45 @@ impl SessionRuntime {
                 None,
             )
         })
+    }
+}
+
+async fn wait_for_pending_response<F, C>(
+    receiver: oneshot::Receiver<PendingResponse>,
+    request_cancelled: C,
+    is_transport_closed: F,
+) -> Result<PendingResponse, rmcp::ErrorData>
+where
+    F: FnMut() -> bool + Send,
+    C: Future<Output = ()> + Send,
+{
+    // A tools/call request can legitimately run for a long time. Only stop
+    // waiting when the request is explicitly cancelled or the transport is no
+    // longer usable.
+    tokio::select! {
+        response = receiver => response.map_err(|_| {
+            rmcp::ErrorData::internal_error(
+                "processor response channel closed".to_string(),
+                None,
+            )
+        }),
+        _ = request_cancelled => Err(rmcp::ErrorData::internal_error(
+            "request cancelled while waiting for processor response".to_string(),
+            None,
+        )),
+        _ = wait_for_transport_to_close(is_transport_closed) => Err(rmcp::ErrorData::internal_error(
+            "transport closed while waiting for processor response".to_string(),
+            None,
+        )),
+    }
+}
+
+async fn wait_for_transport_to_close<F>(mut is_transport_closed: F)
+where
+    F: FnMut() -> bool + Send,
+{
+    while !is_transport_closed() {
+        tokio::time::sleep(TRANSPORT_CLOSED_POLL_INTERVAL).await;
     }
 }
 
@@ -392,6 +433,8 @@ async fn resolve_pending_response(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use anyhow::Result;
@@ -436,6 +479,7 @@ mod tests {
     use crate::outgoing_message::OutgoingResponse;
 
     use super::SessionRuntime;
+    use super::wait_for_pending_response;
 
     #[tokio::test]
     async fn session_runtime_uses_per_session_synthetic_request_ids() -> Result<()> {
@@ -533,6 +577,62 @@ mod tests {
             "second session should remain pending"
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_for_pending_response_returns_processor_payload_when_available() -> Result<()> {
+        let (sender, receiver) = oneshot::channel();
+        assert!(sender.send(Ok(serde_json::json!({ "ok": true }))).is_ok());
+        let request_cancelled = std::future::pending();
+
+        let response = wait_for_pending_response(receiver, request_cancelled, || false).await?;
+
+        assert_eq!(response, Ok(serde_json::json!({ "ok": true })));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_for_pending_response_returns_error_when_request_is_cancelled() -> Result<()> {
+        let (_sender, receiver) = oneshot::channel::<Result<Value, ErrorData>>();
+        let request_cancelled = std::future::ready(());
+
+        let response = wait_for_pending_response(receiver, request_cancelled, || false).await;
+
+        assert_eq!(
+            response,
+            Err(ErrorData::internal_error(
+                "request cancelled while waiting for processor response".to_string(),
+                None,
+            ))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wait_for_pending_response_returns_error_when_transport_is_closed() -> Result<()> {
+        let (_sender, receiver) = oneshot::channel::<Result<Value, ErrorData>>();
+        let request_cancelled = std::future::pending();
+        let transport_closed = Arc::new(AtomicBool::new(false));
+        let transport_closed_clone = transport_closed.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            transport_closed_clone.store(true, Ordering::Relaxed);
+        });
+
+        let response = wait_for_pending_response(receiver, request_cancelled, {
+            let transport_closed = transport_closed.clone();
+            move || transport_closed.load(Ordering::Relaxed)
+        })
+        .await;
+
+        assert_eq!(
+            response,
+            Err(ErrorData::internal_error(
+                "transport closed while waiting for processor response".to_string(),
+                None,
+            ))
+        );
         Ok(())
     }
 
