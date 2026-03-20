@@ -36,11 +36,20 @@ Codex CLI functions as an MCP client that allows the Codex CLI and IDE extension
 
 Codex can be launched as an MCP _server_ by running `codex mcp-server`. This allows _other_ MCP clients to use Codex as a tool for another agent.
 
-Use the [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector) to try it out:
+By default, `codex mcp-server` runs over stdio and can be used with inspector-style launch commands:
 
 ```shell
 npx @modelcontextprotocol/inspector codex mcp-server
 ```
+
+Use the [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector) with Streamable HTTP mode by binding `--listen` and pointing the inspector client at `http://127.0.0.1:8080/mcp`:
+
+```shell
+codex mcp-server --listen http://127.0.0.1:8080
+```
+
+HTTP mode supports `http://IP:PORT[/PATH]` with a default endpoint path of `/mcp`.
+Health probes are exposed at `/healthz` and `/readyz`.
 
 Use `codex mcp` to add/list/get/remove MCP server launchers defined in `config.toml`, and `codex mcp-server` to run the MCP server directly.
 

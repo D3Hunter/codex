@@ -21,7 +21,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-8 | Add per-session runtime scaffold + pending map | `Completed` | `100%` |
 | ST-9 | Bridge response/error/notification message flow | `Completed` | `100%` |
 | ST-10 | Bridge approval requests + session cleanup/cancel | `Completed` | `100%` |
-| ST-11 | Update docs + CLI help for HTTP transport usage | `Not Started` | `0%` |
+| ST-11 | Update docs + CLI help for HTTP transport usage | `Completed` | `100%` |
 | ST-12 | Add/refresh tests and run required verification | `Not Started` | `0%` |
 
 ## Subtasks (Implement In Order)
@@ -169,8 +169,8 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** approval-style request flow works over HTTP and session teardown does not leak active work.
 
 ### ST-11: Update docs + CLI help for HTTP transport usage
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Update user-facing docs and command help for `--listen`, defaults, endpoint path, and health routes.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/docs/codex_mcp_interface.md`
