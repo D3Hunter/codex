@@ -6,20 +6,19 @@ use axum::Router;
 use axum::routing::get;
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
-use rmcp::ServerHandler;
-use rmcp::model::Implementation;
-use rmcp::model::ProtocolVersion;
-use rmcp::model::ServerCapabilities;
-use rmcp::model::ServerInfo;
+#[cfg(test)]
+use codex_core::config::ConfigBuilder;
 use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use tokio::net::TcpListener;
 use tracing::info;
 
+use crate::session_runtime::SessionRuntime;
+
 pub(crate) async fn run(
-    _arg0_paths: Arg0DispatchPaths,
-    _config: Arc<Config>,
+    arg0_paths: Arg0DispatchPaths,
+    config: Arc<Config>,
     bind_address: SocketAddr,
     path: String,
 ) -> IoResult<()> {
@@ -27,12 +26,12 @@ pub(crate) async fn run(
     let local_addr = listener.local_addr()?;
     info!("mcp-server http listening on http://{local_addr}{path}");
 
-    axum::serve(listener, app(&path)).await
+    axum::serve(listener, app(&path, arg0_paths, config)).await
 }
 
-fn app(mcp_path: &str) -> Router {
+fn app(mcp_path: &str, arg0_paths: Arg0DispatchPaths, config: Arc<Config>) -> Router {
     let mcp_service = StreamableHttpService::new(
-        || Ok(HttpInitializeService),
+        move || Ok(SessionRuntime::new(arg0_paths.clone(), config.clone())),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );
@@ -45,30 +44,22 @@ fn app(mcp_path: &str) -> Router {
 
 async fn readiness_handler() {}
 
-#[derive(Clone, Copy, Debug, Default)]
-struct HttpInitializeService;
-
-impl ServerHandler for HttpInitializeService {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_03_26,
-            capabilities: ServerCapabilities::default(),
-            server_info: Implementation {
-                name: "codex-mcp-server".to_string(),
-                title: Some("Codex".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                description: None,
-                icons: None,
-                website_url: None,
-            },
-            instructions: None,
-        }
-    }
-}
-
 #[cfg(test)]
 async fn serve(listener: TcpListener, mcp_path: &str) -> IoResult<()> {
-    axum::serve(listener, app(mcp_path)).await
+    let _temp_dir = tempfile::TempDir::new().map_err(std::io::Error::other)?;
+    let config = Arc::new(
+        ConfigBuilder::default()
+            .codex_home(_temp_dir.path().to_path_buf())
+            .build()
+            .await
+            .map_err(std::io::Error::other)?,
+    );
+
+    axum::serve(
+        listener,
+        app(mcp_path, Arg0DispatchPaths::default(), config),
+    )
+    .await
 }
 
 #[cfg(test)]
