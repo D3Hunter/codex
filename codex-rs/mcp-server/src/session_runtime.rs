@@ -7,6 +7,7 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
 use rmcp::ServerHandler;
 use rmcp::model::CustomNotification;
+use rmcp::model::CustomRequest;
 use rmcp::model::ErrorData;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
@@ -17,10 +18,13 @@ use rmcp::model::RequestId;
 use rmcp::model::ServerCapabilities;
 use rmcp::model::ServerInfo;
 use rmcp::model::ServerNotification;
+use rmcp::model::ServerRequest;
+use rmcp::service::NotificationContext;
 use rmcp::service::Peer;
 use rmcp::service::RequestContext;
 use rmcp::service::RoleServer;
 use serde_json::Value;
+use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -31,11 +35,13 @@ use crate::message_processor::MessageProcessor;
 use crate::outgoing_message::OutgoingError;
 use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::OutgoingMessageSender;
+use crate::outgoing_message::OutgoingRequest;
 use crate::outgoing_message::OutgoingResponse;
 
 type PendingResponse = Result<Value, ErrorData>;
 type PendingResponseSender = oneshot::Sender<PendingResponse>;
 type SessionPeer = Peer<RoleServer>;
+const SESSION_THREAD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(crate) struct SessionRuntime {
     processor: Arc<Mutex<MessageProcessor>>,
@@ -59,8 +65,12 @@ impl SessionRuntime {
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
         let pending_responses = Arc::new(Mutex::new(HashMap::new()));
         let peer = Arc::new(Mutex::new(None));
+        #[cfg(test)]
+        let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx.clone());
+        #[cfg(not(test))]
+        let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx);
         let processor = Arc::new(Mutex::new(MessageProcessor::new(
-            OutgoingMessageSender::new(outgoing_tx.clone()),
+            outgoing_message_sender,
             arg0_paths,
             config,
         )));
@@ -68,6 +78,7 @@ impl SessionRuntime {
         tokio::spawn(run_outgoing_bridge(
             outgoing_rx,
             pending_responses.clone(),
+            processor.clone(),
             peer.clone(),
         ));
 
@@ -158,11 +169,38 @@ impl ServerHandler for SessionRuntime {
             instructions: None,
         }
     }
+
+    async fn on_cancelled(
+        &self,
+        notification: rmcp::model::CancelledNotificationParam,
+        _context: NotificationContext<RoleServer>,
+    ) {
+        self.processor
+            .lock()
+            .await
+            .process_cancelled_notification(notification)
+            .await;
+    }
+}
+
+impl Drop for SessionRuntime {
+    fn drop(&mut self) {
+        let processor = self.processor.clone();
+        if let Ok(handle) = Handle::try_current() {
+            handle.spawn(async move {
+                let processor = processor.lock().await;
+                processor
+                    .shutdown_session_threads(SESSION_THREAD_SHUTDOWN_TIMEOUT)
+                    .await;
+            });
+        }
+    }
 }
 
 async fn run_outgoing_bridge(
     mut outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
     pending_responses: Arc<Mutex<HashMap<RequestId, PendingResponseSender>>>,
+    processor: Arc<Mutex<MessageProcessor>>,
     peer: Arc<Mutex<Option<SessionPeer>>>,
 ) {
     while let Some(outgoing_message) = outgoing_rx.recv().await {
@@ -177,10 +215,7 @@ async fn run_outgoing_bridge(
                 forward_notification(&peer, notification).await;
             }
             OutgoingMessage::Request(request) => {
-                debug!(
-                    method = request.method,
-                    "dropping session request bridge output"
-                );
+                forward_request(&peer, &processor, request).await;
             }
         }
     }
@@ -209,6 +244,63 @@ async fn forward_notification(
             "failed to forward session notification to peer: {err}"
         );
     }
+}
+
+async fn forward_request(
+    peer: &Arc<Mutex<Option<SessionPeer>>>,
+    processor: &Arc<Mutex<MessageProcessor>>,
+    request: OutgoingRequest,
+) {
+    let session_peer = peer.lock().await.clone();
+    let Some(session_peer) = session_peer else {
+        debug!(
+            method = request.method,
+            "dropping session request before peer initialization"
+        );
+        processor
+            .lock()
+            .await
+            .process_response(rmcp::model::JsonRpcResponse {
+                jsonrpc: rmcp::model::JsonRpcVersion2_0,
+                id: request.id,
+                result: serde_json::json!({
+                    "decision": "denied",
+                }),
+            })
+            .await;
+        return;
+    };
+
+    let request_id = request.id.clone();
+    let response = session_peer
+        .send_request(ServerRequest::CustomRequest(CustomRequest::new(
+            request.method,
+            request.params,
+        )))
+        .await;
+
+    let result = match response {
+        Ok(rmcp::model::ClientResult::CustomResult(result)) => result.0,
+        Ok(rmcp::model::ClientResult::CreateMessageResult(_))
+        | Ok(rmcp::model::ClientResult::ListRootsResult(_))
+        | Ok(rmcp::model::ClientResult::CreateElicitationResult(_))
+        | Ok(rmcp::model::ClientResult::EmptyResult(_))
+        | Err(_) => {
+            // Approval callbacks still expect Codex's legacy payload shape.
+            serde_json::json!({
+                "decision": "denied",
+            })
+        }
+    };
+    processor
+        .lock()
+        .await
+        .process_response(rmcp::model::JsonRpcResponse {
+            jsonrpc: rmcp::model::JsonRpcVersion2_0,
+            id: request_id,
+            result,
+        })
+        .await;
 }
 
 async fn resolve_pending_response(
@@ -243,6 +335,8 @@ mod tests {
     use rmcp::model::ClientJsonRpcMessage;
     use rmcp::model::ClientNotification;
     use rmcp::model::ClientRequest;
+    use rmcp::model::ClientResult;
+    use rmcp::model::CustomResult;
     use rmcp::model::ErrorData;
     use rmcp::model::Extensions;
     use rmcp::model::Implementation;
@@ -256,17 +350,21 @@ mod tests {
     use rmcp::model::RequestId;
     use rmcp::model::ServerJsonRpcMessage;
     use rmcp::model::ServerNotification;
+    use rmcp::model::ServerRequest;
     use rmcp::model::ServerResult;
     use rmcp::serve_server;
     use rmcp::transport::Transport;
     use rmcp::transport::TransportAdapterIdentity;
+    use serde_json::Value;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
+    use tokio::sync::oneshot;
     use tokio::time::timeout;
 
     use crate::outgoing_message::OutgoingError;
     use crate::outgoing_message::OutgoingMessage;
     use crate::outgoing_message::OutgoingNotification;
+    use crate::outgoing_message::OutgoingRequest;
     use crate::outgoing_message::OutgoingResponse;
 
     use super::SessionRuntime;
@@ -458,6 +556,153 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn session_runtime_forwards_requests_to_peer_custom_request_channel() -> Result<()> {
+        let (_temp_dir, runtime) = create_session_runtime().await?;
+        let (transport, mut handle) = test_server_transport();
+
+        handle.send_initialize_request().await?;
+        handle.send_initialized_notification().await?;
+        let _running_service =
+            serve_server::<_, _, _, TransportAdapterIdentity>(runtime, transport).await?;
+
+        let _initialize_response = timeout(Duration::from_secs(1), handle.recv()).await??;
+
+        _running_service
+            .service()
+            .send_outgoing_message(OutgoingMessage::Request(OutgoingRequest {
+                id: RequestId::Number(41),
+                method: "elicitation/create".to_string(),
+                params: Some(serde_json::json!({
+                    "decision": "approved",
+                })),
+            }))
+            .await;
+
+        let request = timeout(Duration::from_secs(1), handle.recv()).await??;
+        match request {
+            ServerJsonRpcMessage::Request(request) => match request.request {
+                ServerRequest::CustomRequest(custom) => {
+                    assert_eq!(custom.method, "elicitation/create");
+                    assert_eq!(
+                        custom.params,
+                        Some(serde_json::json!({
+                            "decision": "approved",
+                        }))
+                    );
+                }
+                ServerRequest::PingRequest(_)
+                | ServerRequest::CreateMessageRequest(_)
+                | ServerRequest::ListRootsRequest(_)
+                | ServerRequest::CreateElicitationRequest(_) => {
+                    anyhow::bail!("expected custom request")
+                }
+            },
+            ServerJsonRpcMessage::Response(_)
+            | ServerJsonRpcMessage::Notification(_)
+            | ServerJsonRpcMessage::Error(_) => anyhow::bail!("expected request"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_runtime_routes_peer_custom_request_response_back_to_callback_flow()
+    -> Result<()> {
+        let (_temp_dir, runtime) = create_session_runtime().await?;
+        let (transport, mut handle) = test_server_transport();
+
+        handle.send_initialize_request().await?;
+        handle.send_initialized_notification().await?;
+        let running_service =
+            serve_server::<_, _, _, TransportAdapterIdentity>(runtime, transport).await?;
+
+        let _initialize_response = timeout(Duration::from_secs(1), handle.recv()).await??;
+
+        let receiver = running_service
+            .service()
+            .send_custom_request(
+                "elicitation/create",
+                Some(serde_json::json!({
+                    "decision": "approved",
+                })),
+            )
+            .await;
+
+        let request = timeout(Duration::from_secs(1), handle.recv()).await??;
+        let request_id = match request {
+            ServerJsonRpcMessage::Request(request) => match request.request {
+                ServerRequest::CustomRequest(custom) => {
+                    assert_eq!(custom.method, "elicitation/create");
+                    assert_eq!(
+                        custom.params,
+                        Some(serde_json::json!({
+                            "decision": "approved",
+                        }))
+                    );
+                    request.id
+                }
+                ServerRequest::PingRequest(_)
+                | ServerRequest::CreateMessageRequest(_)
+                | ServerRequest::ListRootsRequest(_)
+                | ServerRequest::CreateElicitationRequest(_) => {
+                    anyhow::bail!("expected custom request")
+                }
+            },
+            ServerJsonRpcMessage::Response(_)
+            | ServerJsonRpcMessage::Notification(_)
+            | ServerJsonRpcMessage::Error(_) => anyhow::bail!("expected request"),
+        };
+
+        handle
+            .incoming
+            .send(ClientJsonRpcMessage::response(
+                ClientResult::CustomResult(CustomResult::new(serde_json::json!({
+                    "decision": "approved",
+                }))),
+                request_id,
+            ))
+            .await?;
+
+        let response = timeout(Duration::from_secs(1), receiver).await??;
+        assert_eq!(
+            response,
+            serde_json::json!({
+                "decision": "approved",
+            })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_runtime_drop_shuts_down_session_threads() -> Result<()> {
+        let (_temp_dir, runtime) = create_session_runtime().await?;
+        let processor = runtime.processor.clone();
+
+        {
+            let processor = processor.lock().await;
+            let _thread_id = processor.start_test_thread().await?;
+            assert_eq!(processor.thread_count_for_test().await, 1);
+        }
+
+        drop(runtime);
+
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let processor = processor.lock().await;
+                if processor.thread_count_for_test().await == 0 {
+                    break;
+                }
+                drop(processor);
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await?;
+
+        Ok(())
+    }
+
     async fn create_session_runtime() -> Result<(TempDir, SessionRuntime)> {
         let temp_dir = TempDir::new()?;
         let config = Arc::new(
@@ -471,6 +716,20 @@ mod tests {
             temp_dir,
             SessionRuntime::new(Arg0DispatchPaths::default(), config),
         ))
+    }
+
+    impl SessionRuntime {
+        async fn send_custom_request(
+            &self,
+            method: &str,
+            params: Option<Value>,
+        ) -> oneshot::Receiver<Value> {
+            self.processor
+                .lock()
+                .await
+                .send_custom_request_for_test(method, params)
+                .await
+        }
     }
 
     struct TestServerTransport {

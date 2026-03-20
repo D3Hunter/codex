@@ -20,7 +20,7 @@ Implementation will support concurrent HTTP sessions, local-only default binding
 | ST-7 | Mount Streamable HTTP MCP endpoint path handling | `Completed` | `100%` |
 | ST-8 | Add per-session runtime scaffold + pending map | `Completed` | `100%` |
 | ST-9 | Bridge response/error/notification message flow | `Completed` | `100%` |
-| ST-10 | Bridge approval requests + session cleanup/cancel | `Not Started` | `0%` |
+| ST-10 | Bridge approval requests + session cleanup/cancel | `Completed` | `100%` |
 | ST-11 | Update docs + CLI help for HTTP transport usage | `Not Started` | `0%` |
 | ST-12 | Add/refresh tests and run required verification | `Not Started` | `0%` |
 
@@ -152,8 +152,8 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
 - **Done when:** response and notification routing is deterministic and tested.
 
 ### ST-10: Bridge approval requests + session cleanup/cancel
-- **Status:** `Not Started`
-- **Progress:** `0%`
+- **Status:** `Completed`
+- **Progress:** `100%`
 - **Scope:** Handle outbound request/approval round-trips and ensure session shutdown/cancellation cleanup works.
 - **Primary files (expected):**
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/http_runtime.rs`
@@ -162,10 +162,10 @@ Target size for each subtask: keep changes around `100-500` LoC where possible (
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/exec_approval.rs`
   - `/Users/jujiajia/code/codex/codex-rs/mcp-server/src/patch_approval.rs`
 - **Checklist:**
-  - [ ] Forward `OutgoingMessage::Request` to client custom request channel and route response back into callback flow.
-  - [ ] Preserve existing non-standard approval shape (`{ decision: ... }`) for compatibility.
-  - [ ] On session shutdown, bounded-shutdown active session-created threads.
-  - [ ] Keep cancellation wired to current `notifications/cancelled` behavior.
+  - [x] Forward `OutgoingMessage::Request` to client custom request channel and route response back into callback flow.
+  - [x] Preserve existing non-standard approval shape (`{ decision: ... }`) for compatibility.
+  - [x] On session shutdown, bounded-shutdown active session-created threads.
+  - [x] Keep cancellation wired to current `notifications/cancelled` behavior.
 - **Done when:** approval-style request flow works over HTTP and session teardown does not leak active work.
 
 ### ST-11: Update docs + CLI help for HTTP transport usage
